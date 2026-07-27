@@ -25,14 +25,12 @@ export default function Layout() {
                 const response = await api.get("/users/me");
                 setUser(response.data);
             } catch {
-
                 localStorage.removeItem("token");
                 navigate("/login");
             } finally {
                 setLoading(false);
             }
         };
-
 
         void fetchProfile();
     }, [navigate]);
@@ -80,6 +78,9 @@ export default function Layout() {
                             <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Member Area</div>
                             <Link to="/subscriptions" className={`block px-4 py-2 rounded transition ${location.pathname === "/subscriptions" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>🎫 My Subscription</Link>
                             <Link to="/workouts" className={`block px-4 py-2 rounded transition ${location.pathname === "/workouts" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>🏋️ Workouts</Link>
+                            {/* NOVO - Link za coaching */}
+                            <Link to="/coaching" className={`block px-4 py-2 rounded transition ${location.pathname === "/coaching" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>💬 Coaching</Link>
+                            <Link to="/appointments" className={`block px-4 py-2 rounded transition ${location.pathname === "/appointments" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>📅 Appointments</Link>
                         </>
                     )}
 
@@ -87,8 +88,10 @@ export default function Layout() {
                     {hasRole("trainer") && (
                         <>
                             <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Trainer Area</div>
-                            <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">👥 My Clients</Link>
-                            <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">📅 Appointments</Link>
+                            {/* NOVO - Izmenjen link da vodi na /trainer/clients */}
+                            <Link to="/trainer/clients" className={`block px-4 py-2 rounded transition ${location.pathname === "/trainer/clients" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>👥 My Clients</Link>
+
+                            <Link to="/trainer/appointments" className={`block px-4 py-2 rounded transition ${location.pathname === "/trainer/appointments" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>📅 Appointments</Link>
                             <Link to="/trainer/plans" className={`block px-4 py-2 rounded transition ${location.pathname === "/trainer/plans" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>📝 Workout Plans</Link>
                         </>
                     )}
@@ -97,8 +100,9 @@ export default function Layout() {
                     {hasRole("worker") && (
                         <>
                             <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Desk Area</div>
-                            <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">🔍 Check Access</Link>
+                            <Link to="/worker/dashboard" className={`block px-4 py-2 rounded transition ${location.pathname === "/worker/dashboard" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>🔍 Check Access</Link>
                         </>
+
                     )}
 
                     {/* ADMIN LINKS */}
@@ -106,7 +110,6 @@ export default function Layout() {
                         <>
                             <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Admin Area</div>
                             <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">📈 Analytics</Link>
-                            {/* OVO SMO IZMENILI */}
                             <Link to="/admin/hr" className={`block px-4 py-2 rounded transition ${location.pathname === "/admin/hr" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>👔 HR Panel</Link>
                             <Link to="/admin/plans" className={`block px-4 py-2 rounded transition ${location.pathname === "/admin/plans" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>💳 Manage Plans</Link>
                         </>
@@ -134,8 +137,8 @@ export default function Layout() {
                     <div className="flex gap-2">
                         {user?.roles.map((r) => (
                             <span key={r.id} className="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full uppercase">
-                {r.name}
-              </span>
+                                {r.name}
+                            </span>
                         ))}
                     </div>
                 </header>
