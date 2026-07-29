@@ -109,7 +109,7 @@ export default function Layout() {
                     {hasRole("admin") && (
                         <>
                             <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Admin Area</div>
-                            <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">📈 Analytics</Link>
+                            <Link to="/admin/analytics" className={`block px-4 py-2 rounded transition ${location.pathname === "/admin/analytics" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>📈 Analytics</Link>
                             <Link to="/admin/hr" className={`block px-4 py-2 rounded transition ${location.pathname === "/admin/hr" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>👔 HR Panel</Link>
                             <Link to="/admin/plans" className={`block px-4 py-2 rounded transition ${location.pathname === "/admin/plans" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>💳 Manage Plans</Link>
                         </>

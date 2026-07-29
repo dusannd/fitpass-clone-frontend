@@ -1,75 +1,66 @@
-# React + TypeScript + Vite
+# FitPass Clone - Frontend (React + Vite) 🚀
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is the frontend application for the FitPass Clone Gym Management System.
+Built with **React 19**, **TypeScript**, **Vite**, and **Tailwind CSS**.
 
-Currently, two official plugins are available:
+> **Status:** 🚧 `v2-develop` phase (Active Development)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 📌 Current Features & Capabilities
 
-## React Compiler
+The system is fully integrated with the Python/FastAPI backend and currently supports the following modules:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 1. Identity & RBAC (Role-Based Access Control)
+- Secure JWT-based Authentication (Login/Register).
+- Smart route redirection and "Auth Guards" to prevent logged-in users from seeing the login screen.
+- Role-specific UI (Members, Trainers, Desk Workers, and Admins see completely different dashboards).
 
-## Expanding the ESLint configuration
+### 2. Subscriptions & Payments
+- Members can browse active subscription plans.
+- Full Stripe Checkout integration for purchasing plans.
+- Dynamic Gym Access QR Code is generated on the Member Dashboard *only* if they have an active subscription (refreshes every 60s).
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### 3. Desk Worker Operations (Smart Door Access)
+- **Check Access:** Workers can scan or manually search member IDs to verify active subscriptions.
+- **Manual Override:** Workers can open doors manually in case of emergencies, which logs their `Worker ID` and `Location ID` to the backend audit database.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### 4. Coaching & Scheduling (1-on-1)
+- **Member:** Can browse all trainers, send coaching requests, and book training sessions.
+- **Trainer:** Can accept/reject pending requests, view their active client list, and manage their calendar.
+- Overbooking protection (Trainers cannot be double-booked) and session duration limits (max 3 hours).
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### 5. Workout Tracking & Plans
+- **Trainer:** Can create and publish detailed workout plans (Exercises, Sets, Reps, Rest Times).
+- **Member:** Can select a plan and log their actual performance.
+- **Bodyweight Support:** Dedicated checkbox for bodyweight exercises, visually differentiating them from weighted lifts (prevents 0kg entries).
+- Endless scrolling pagination ("Load More") for workout history.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 6. Admin Panel
+- **Analytics Dashboard:** Live statistics of daily gym entries, failed scans, and total user count.
+- **Security Audit Log:** A detailed table tracking every manual door override performed by desk workers.
+- **HR Panel:** Hire/Fire staff dynamically by assigning or revoking `trainer` and `worker` roles.
+- **Plan Management:** Create new pricing plans and assign them to specific gym physical locations.
 
-```
+---
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 💻 Tech Stack
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- **Framework:** React (v19)
+- **Build Tool:** Vite
+- **Language:** TypeScript (Strict mode enabled)
+- **Styling:** Tailwind CSS
+- **API Calls:** Axios (Custom interceptor for JWT injection)
+- **QR Code Generation:** `qrcode.react`
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 🛠️ Getting Started
 
-```
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
+3. Open `http://localhost:5173` in your browser.
+
+*(Note: The FastAPI backend must be running on `localhost:8000` for the frontend to retrieve data).*

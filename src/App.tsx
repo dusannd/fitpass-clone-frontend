@@ -14,6 +14,7 @@ import MemberCoaching from "./pages/member/MemberCoaching.tsx";
 import MemberAppointments from "./pages/member/MemberAppointments.tsx";
 import TrainerAppointments from "./pages/trainer/TrainerAppointments.tsx";
 import WorkerDashboard from "./pages/worker/WorkerDashboard.tsx";
+import AdminAnalytics from "./pages/admin/AdminAnalytics.tsx";
 
 
 export default function App() {
@@ -42,6 +43,7 @@ export default function App() {
             {/* ADMIN ROUTES */}
           <Route path="/admin/plans" element={<ManagePlans />} />
           <Route path="/admin/hr" element={<HRPanel />} />
+            <Route path="/admin/analytics" element={<AdminAnalytics />} />
           {/* TRAINER ROUTES */}
           <Route path="/trainer/plans" element={<TrainerPlans />} />
             <Route path="/trainer/clients" element={<TrainerClients />} />

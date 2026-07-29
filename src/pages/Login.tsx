@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import { useState, useEffect } from "react";
+import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { api } from "../api/axios";
@@ -9,7 +10,15 @@ export default function Login() {
     const [password, setPassword] = useState("");
     const [error, setError] = useState("");
 
-    const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+    // SMART REDIRECT
+    useEffect(() => {
+        const token = localStorage.getItem("token");
+        if (token) {
+            navigate("/dashboard", { replace: true });
+        }
+    }, [navigate]);
+
+    const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError("");
 
@@ -38,14 +47,14 @@ export default function Login() {
                 </h2>
 
                 {error && (
-                    <div className="bg-red-100 text-red-600 p-3 rounded mb-4 text-center">
+                    <div className="bg-red-100 text-red-600 p-3 rounded mb-4 text-center font-bold text-sm">
                         {error}
                     </div>
                 )}
 
-                <form onSubmit={handleLogin} className="flex flex-col gap-4">
+                <form onSubmit={(e) => void handleLogin(e)} className="flex flex-col gap-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-bold text-gray-700 mb-1">
                             Email
                         </label>
                         <input
@@ -59,7 +68,7 @@ export default function Login() {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-bold text-gray-700 mb-1">
                             Password
                         </label>
                         <input
@@ -74,15 +83,15 @@ export default function Login() {
 
                     <button
                         type="submit"
-                        className="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition"
+                        className="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded hover:bg-blue-700 transition shadow-sm mt-2"
                     >
                         Sign In
                     </button>
                 </form>
 
-                <div className="mt-4 text-center text-sm text-gray-600">
+                <div className="mt-6 text-center text-sm text-gray-600">
                     Don't have an account?{" "}
-                    <Link to="/register" className="text-blue-600 hover:underline">
+                    <Link to="/register" className="text-blue-600 font-bold hover:underline">
                         Sign Up here
                     </Link>
                 </div>
