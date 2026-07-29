@@ -1,8 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import axios from "axios";
-import { api } from "../../api/axios.ts";
+import { api } from "../../api/axios";
 
-interface UserStatus {
+interface StatusResponse {
     user_id: number;
     full_name: string;
     email: string;
@@ -14,134 +14,149 @@ interface UserStatus {
 }
 
 export default function WorkerDashboard() {
-    const [userIdInput, setUserIdInput] = useState("");
+    const [userId, setUserId] = useState<string>("");
+    const [locationId, setLocationId] = useState<number>(3);
+    const [statusData, setStatusData] = useState<StatusResponse | null>(null);
 
-    // NOVO: Radnik može da menja na kojoj je lokaciji (ti si rekao da je 3 aktivna)
-    const [currentLocationId, setCurrentLocationId] = useState<number>(3);
+    const [loadingCheck, setLoadingCheck] = useState(false);
+    const [loadingOverride, setLoadingHoverride] = useState(false);
 
-    const [userStatus, setUserStatus] = useState<UserStatus | null>(null);
-    const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
 
-    const handleCheckStatus = async (e: FormEvent<HTMLFormElement>) => {
+    const handleCheckStatus = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
         setSuccessMsg("");
-        setUserStatus(null);
-        setLoading(true);
+        setStatusData(null);
 
+        if (!userId) return;
+
+        setLoadingCheck(true);
         try {
-            const res = await api.get(`/worker/user/${userIdInput}/status`);
-            setUserStatus(res.data);
+            const res = await api.get(`/worker/user/${userId}/status`);
+            setStatusData(res.data as StatusResponse);
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to find user.");
+                setError(err.response?.data?.detail || "User not found or request failed.");
             } else {
-                setError("An unexpected error occurred.");
+                setError("An error occurred.");
             }
         } finally {
-            setLoading(false);
+            setLoadingCheck(false);
         }
     };
 
     const handleManualOverride = async () => {
-        if (!userStatus) return;
+        if (!userId) return;
         setError("");
         setSuccessMsg("");
+        setLoadingHoverride(true);
 
         try {
-            // Šaljemo izabranu lokaciju sa frontenda na backend
-            const res = await api.post(`/worker/manual-entry/${userStatus.user_id}?location_id=${currentLocationId}`);
-            setSuccessMsg(res.data.message || "Door manually opened!");
+            const res = await api.post(`/worker/manual-entry/${userId}?location_id=${locationId}`);
+            setSuccessMsg(res.data.message || "Door opened successfully!");
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to open door. Does this location ID exist?");
+                setError(err.response?.data?.detail || "Failed to open door.");
             } else {
-                setError("An unexpected error occurred.");
+                setError("An error occurred.");
             }
+        } finally {
+            setLoadingHoverride(false);
         }
     };
 
     return (
         <div className="max-w-4xl mx-auto flex flex-col gap-8">
-            <div className="flex justify-between items-end">
+            {/* HEADER */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-800">Desk Worker Panel</h1>
-                    <p className="text-gray-600 mt-2">Verify subscriptions and perform manual door overrides.</p>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white transition-colors duration-200">
+                        Desk Worker Panel
+                    </h1>
+                    <p className="text-gray-600 dark:text-gray-400 mt-1 transition-colors duration-200">
+                        Verify subscriptions and perform manual door overrides.
+                    </p>
                 </div>
 
-                {/* SETOVANJE LOKACIJE RADNIKA */}
-                <div className="bg-blue-50 border border-blue-200 p-2 rounded-lg text-sm flex items-center gap-2">
-                    <label className="font-bold text-blue-800">My Gym Location ID:</label>
+                <div className="bg-white dark:bg-slate-900 p-3 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 flex items-center gap-3">
+                    <label className="text-xs font-bold text-gray-600 dark:text-slate-300">My Gym Location ID:</label>
                     <input
                         type="number"
-                        min="1"
-                        value={currentLocationId}
-                        onChange={(e) => setCurrentLocationId(parseInt(e.target.value))}
-                        className="w-16 p-1 rounded border border-blue-300 text-center font-bold"
+                        value={locationId}
+                        onChange={(e) => setLocationId(parseInt(e.target.value) || 1)}
+                        className="w-16 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-1 text-center font-bold rounded-xl text-sm"
                     />
                 </div>
             </div>
 
-            {/* SEARCH FORM */}
-            <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-                <form onSubmit={(e) => void handleCheckStatus(e)} className="flex gap-4 items-end">
-                    <div className="flex-1">
-                        <label className="block text-sm font-bold text-gray-700 mb-1">Enter Member ID</label>
+            {/* CHECK STATUS FORM */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800 transition-colors duration-200">
+                <form onSubmit={(e) => void handleCheckStatus(e)} className="flex flex-col gap-4">
+                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300">
+                        Enter Member ID
+                    </label>
+
+                    <div className="flex gap-4">
                         <input
                             type="number"
-                            required
-                            min="1"
-                            value={userIdInput}
-                            onChange={(e) => setUserIdInput(e.target.value)}
+                            value={userId}
+                            onChange={(e) => setUserId(e.target.value)}
                             placeholder="e.g. 105"
-                            className="w-full border border-gray-300 p-3 rounded focus:ring-2 focus:ring-blue-500 text-lg"
+                            required
+                            className="flex-1 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-lg font-semibold"
                         />
-                    </div>
-                    <button type="submit" disabled={loading} className="bg-blue-600 text-white font-bold py-3 px-8 rounded hover:bg-blue-700 transition">
-                        {loading ? "Checking..." : "Check Status"}
-                    </button>
-                </form>
-                {error && <div className="mt-4 bg-red-100 text-red-700 p-3 rounded font-bold text-sm">{error}</div>}
-                {successMsg && <div className="mt-4 bg-green-100 text-green-700 p-3 rounded font-bold text-sm">{successMsg}</div>}
-            </div>
-
-            {/* STATUS RESULT CARD */}
-            {userStatus && (
-                <div className={`rounded-lg shadow-sm p-6 border-2 flex flex-col md:flex-row justify-between items-center gap-6 ${
-                    userStatus.has_active_subscription ? "bg-green-50 border-green-200" : "bg-red-50 border-red-200"
-                }`}>
-                    <div>
-                        <div className="flex items-center gap-3 mb-2">
-                            <h2 className="text-2xl font-bold text-gray-800">{userStatus.full_name}</h2>
-                            <span className="bg-gray-200 text-gray-600 text-xs font-bold px-2 py-1 rounded">ID: {userStatus.user_id}</span>
-                        </div>
-                        <p className="text-gray-600 mb-4">{userStatus.email}</p>
-
-                        {userStatus.has_active_subscription ? (
-                            <div className="text-green-800 font-bold">
-                                <p className="text-lg">✅ Active: {userStatus.plan_name}</p>
-                                <p className="text-sm font-normal">Expires in: {userStatus.days_left} days</p>
-                            </div>
-                        ) : (
-                            <div className="text-red-800 font-bold">
-                                <p className="text-lg">❌ {userStatus.message}</p>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="w-full md:w-auto flex flex-col gap-2">
                         <button
-                            onClick={() => void handleManualOverride()}
-                            className="bg-gray-900 text-white font-bold py-4 px-8 rounded-lg hover:bg-black transition shadow-md"
+                            type="submit"
+                            disabled={loadingCheck}
+                            className="bg-blue-600 text-white font-bold px-6 py-3 rounded-xl hover:bg-blue-700 transition shadow-sm disabled:opacity-50"
                         >
-                            🚨 MANUAL OVERRIDE <br/><span className="text-sm font-normal">(Open Door)</span>
+                            {loadingCheck ? "Checking..." : "Check Status"}
                         </button>
-                        <p className="text-xs text-center text-gray-500">Action logged at Location {currentLocationId}</p>
                     </div>
-                </div>
-            )}
+                </form>
+
+                {error && <div className="bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 p-4 rounded-xl mt-6 font-bold text-sm border border-red-200 dark:border-red-800">{error}</div>}
+                {successMsg && <div className="bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-300 p-4 rounded-xl mt-6 font-bold text-sm border border-green-200 dark:border-green-800">{successMsg}</div>}
+
+                {/* USER STATUS RESULT DISPLAY */}
+                {statusData && (
+                    <div className="mt-8 border-t border-gray-100 dark:border-slate-800 pt-6 flex flex-col gap-6">
+                        <div className={`p-6 rounded-2xl border flex flex-col md:flex-row justify-between items-start md:items-center gap-4 ${
+                            statusData.has_active_subscription
+                                ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200"
+                                : "bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 text-rose-900 dark:text-rose-200"
+                        }`}>
+                            <div>
+                                <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider inline-block mb-2 ${
+                                    statusData.has_active_subscription ? "bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-100" : "bg-rose-200 dark:bg-rose-800 text-rose-800 dark:text-rose-100"
+                                }`}>
+                                    {statusData.has_active_subscription ? "ACTIVE SUBSCRIPTION 🟢" : "NO ACTIVE SUBSCRIPTION 🔴"}
+                                </span>
+                                <h2 className="text-2xl font-black">{statusData.full_name}</h2>
+                                <p className="text-sm opacity-80">{statusData.email}</p>
+
+                                {statusData.has_active_subscription && (
+                                    <div className="mt-3 text-sm font-semibold flex flex-wrap gap-4">
+                                        <span>Plan: <strong>{statusData.plan_name}</strong></span>
+                                        <span>Days Left: <strong>{statusData.days_left} days</strong></span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* MANUAL OVERRIDE BUTTON */}
+                            <button
+                                onClick={() => void handleManualOverride()}
+                                disabled={loadingOverride}
+                                className="bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold px-6 py-3 rounded-xl hover:bg-black dark:hover:bg-white transition shadow-md whitespace-nowrap self-stretch md:self-auto disabled:opacity-50"
+                            >
+                                {loadingOverride ? "Opening..." : "🔓 Manual Door Override"}
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }

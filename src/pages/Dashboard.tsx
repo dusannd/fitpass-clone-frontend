@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useOutletContext, Link } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
-import { api } from "../api/axios.ts";
+import { api } from "../api/axios";
 import type { User } from "../components/Layout";
 
 export default function Dashboard() {
@@ -59,38 +59,38 @@ export default function Dashboard() {
     return (
         <div className="flex flex-col gap-6 max-w-4xl mx-auto">
             {/* WELCOME BANNER */}
-            <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-                <h1 className="text-2xl font-bold text-gray-800 mb-2">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800 transition-colors duration-200">
+                <h1 className="text-2xl font-bold text-gray-800 dark:text-white mb-2 transition-colors">
                     Welcome back, {user.first_name}! 👋
                 </h1>
-                <p className="text-gray-600">
-                    Your privileges: <span className="font-bold text-blue-600 uppercase">{user.roles.map(r => r.name).join(", ")}</span>
+                <p className="text-gray-600 dark:text-slate-400 transition-colors">
+                    Your privileges: <span className="font-bold text-blue-600 dark:text-blue-400 uppercase">{user.roles.map(r => r.name).join(", ")}</span>
                 </p>
             </div>
 
             {/* MEMBER SECTION - DYNAMIC QR CODE */}
             {isMember && (
-                <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 flex flex-col md:flex-row items-center gap-8 justify-center text-center md:text-left">
+                <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800 flex flex-col md:flex-row items-center gap-8 justify-center text-center md:text-left transition-colors duration-200">
                     <div className="flex-1">
-                        <h2 className="text-2xl font-black text-gray-800 mb-2">Gym Access</h2>
-                        <p className="text-gray-600 mb-6">
+                        <h2 className="text-2xl font-black text-gray-800 dark:text-white mb-2 transition-colors">Gym Access</h2>
+                        <p className="text-gray-600 dark:text-slate-400 mb-6 transition-colors">
                             Scan this QR code at the turnstile to enter the gym.
                             The code automatically refreshes for security.
                         </p>
                         {error ? (
-                            <div className="bg-red-100 text-red-700 p-4 rounded font-bold">
+                            <div className="bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 p-4 rounded-xl font-bold border border-red-200 dark:border-red-800 transition-colors">
                                 {error}
                             </div>
                         ) : (
-                            <div className="inline-block bg-blue-50 text-blue-800 px-4 py-2 rounded-full font-bold text-sm">
-                                Code expires in: <span className="text-red-600 text-lg">{timeLeft}s</span>
+                            <div className="inline-block bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 px-4 py-2 rounded-full font-bold text-sm border border-blue-100 dark:border-blue-800 transition-colors">
+                                Code expires in: <span className="text-red-600 dark:text-red-400 text-lg">{timeLeft}s</span>
                             </div>
                         )}
                     </div>
 
                     {/* QR CODE RENDERER */}
                     {!error && qrToken && (
-                        <div className="bg-white p-4 rounded-xl shadow-md border-4 border-gray-100">
+                        <div className="bg-white dark:bg-slate-100 p-4 rounded-2xl shadow-md border-4 border-gray-100 dark:border-slate-700 transition-colors">
                             <QRCodeSVG value={qrToken} size={200} />
                         </div>
                     )}
@@ -100,13 +100,13 @@ export default function Dashboard() {
             {/* QUICK LINKS FOR STAFF */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {isWorker && (
-                    <Link to="/worker/dashboard" className="bg-gradient-to-br from-gray-800 to-gray-900 text-white rounded-lg p-6 shadow-sm hover:shadow-md transition">
+                    <Link to="/worker/dashboard" className="bg-gradient-to-br from-gray-800 to-gray-900 dark:from-slate-800 dark:to-slate-950 text-white rounded-2xl p-6 shadow-sm hover:shadow-md transition border border-transparent dark:border-slate-800">
                         <h3 className="font-bold text-lg mb-1">Desk Worker Panel</h3>
                         <p className="text-gray-300 text-sm">Verify user statuses and manually open doors.</p>
                     </Link>
                 )}
                 {isTrainer && (
-                    <Link to="/trainer/clients" className="bg-gradient-to-br from-blue-600 to-blue-800 text-white rounded-lg p-6 shadow-sm hover:shadow-md transition">
+                    <Link to="/trainer/clients" className="bg-gradient-to-br from-blue-600 to-blue-800 dark:from-blue-700 dark:to-blue-950 text-white rounded-2xl p-6 shadow-sm hover:shadow-md transition border border-transparent dark:border-blue-900">
                         <h3 className="font-bold text-lg mb-1">My Clients</h3>
                         <p className="text-blue-100 text-sm">Manage pending coaching requests and active clients.</p>
                     </Link>

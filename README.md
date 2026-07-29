@@ -3,7 +3,7 @@
 This is the frontend application for the FitPass Clone Gym Management System.
 Built with **React 19**, **TypeScript**, **Vite**, and **Tailwind CSS**.
 
-> **Status:** 🚧 `v2-develop` phase (Active Development)
+> **Status:** 🚧 `v1-develop` phase (Active Development)
 
 ## 📌 Current Features & Capabilities
 
