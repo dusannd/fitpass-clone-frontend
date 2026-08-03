@@ -1,66 +1,75 @@
-# FitPass Clone - Frontend (React + Vite) 🚀
+# FitPass Clone - Frontend Application
 
-This is the frontend application for the FitPass Clone Gym Management System.
-Built with **React 19**, **TypeScript**, **Vite**, and **Tailwind CSS**.
+A modern, high-performance React frontend for the FitPass Clone / Gym Management system. Built with React 19, TypeScript, Vite, and Tailwind CSS, this application delivers a seamless, secure, and role-driven experience for gym members, personal trainers, desk workers, and administrators.
 
-> **Status:** 🚧 `v1-develop` phase (Active Development)
-
-## 📌 Current Features & Capabilities
-
-The system is fully integrated with the Python/FastAPI backend and currently supports the following modules:
-
-### 1. Identity & RBAC (Role-Based Access Control)
-- Secure JWT-based Authentication (Login/Register).
-- Smart route redirection and "Auth Guards" to prevent logged-in users from seeing the login screen.
-- Role-specific UI (Members, Trainers, Desk Workers, and Admins see completely different dashboards).
-
-### 2. Subscriptions & Payments
-- Members can browse active subscription plans.
-- Full Stripe Checkout integration for purchasing plans.
-- Dynamic Gym Access QR Code is generated on the Member Dashboard *only* if they have an active subscription (refreshes every 60s).
-
-### 3. Desk Worker Operations (Smart Door Access)
-- **Check Access:** Workers can scan or manually search member IDs to verify active subscriptions.
-- **Manual Override:** Workers can open doors manually in case of emergencies, which logs their `Worker ID` and `Location ID` to the backend audit database.
-
-### 4. Coaching & Scheduling (1-on-1)
-- **Member:** Can browse all trainers, send coaching requests, and book training sessions.
-- **Trainer:** Can accept/reject pending requests, view their active client list, and manage their calendar.
-- Overbooking protection (Trainers cannot be double-booked) and session duration limits (max 3 hours).
-
-### 5. Workout Tracking & Plans
-- **Trainer:** Can create and publish detailed workout plans (Exercises, Sets, Reps, Rest Times).
-- **Member:** Can select a plan and log their actual performance.
-- **Bodyweight Support:** Dedicated checkbox for bodyweight exercises, visually differentiating them from weighted lifts (prevents 0kg entries).
-- Endless scrolling pagination ("Load More") for workout history.
-
-### 6. Admin Panel
-- **Analytics Dashboard:** Live statistics of daily gym entries, failed scans, and total user count.
-- **Security Audit Log:** A detailed table tracking every manual door override performed by desk workers.
-- **HR Panel:** Hire/Fire staff dynamically by assigning or revoking `trainer` and `worker` roles.
-- **Plan Management:** Create new pricing plans and assign them to specific gym physical locations.
+![React](https://img.shields.io/badge/React-19-blue.svg?style=flat&logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg?style=flat&logo=typescript)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?style=flat&logo=tailwind-css)
+![Vite](https://img.shields.io/badge/Vite-Lightning_Fast-646CFF.svg?style=flat&logo=vite)
 
 ---
 
-## 💻 Tech Stack
+## Key Features & Capabilities
 
-- **Framework:** React (v19)
-- **Build Tool:** Vite
-- **Language:** TypeScript (Strict mode enabled)
-- **Styling:** Tailwind CSS
-- **API Calls:** Axios (Custom interceptor for JWT injection)
-- **QR Code Generation:** `qrcode.react`
+### Advanced Security & Anti-Fraud
+* **Bulletproof QR Gym Access:** Turnstile entry/exit system via QR codes. Features 5-minute TTLs, localStorage state persistence (survives page refreshes), and responsive UI cooldowns parsing 429 Too Many Requests API limits.
+* **Real-time WebSocket Sync:** Listens for turnstile scanner events. Once scanned, the QR code is instantly wiped from memory and the screen to prevent screenshot/replay attacks.
+* **Bot Protection:** Registration and Login forms are secured with invisible Honeypot fields and Google reCAPTCHA v3.
+* **Secure Sessions:** Fully configured to use HTTP-Only JWT cookies via Axios interceptors, automatically redirecting users upon session expiration (401 Unauthorized).
 
-## 🛠️ Getting Started
+### Role-Based Access Control (RBAC)
+* **Members:** Buy subscriptions via Stripe, request 1-on-1 coaching, book sessions, and track workout progress via interactive area charts (Recharts).
+* **Trainers:** Create public/private workout plans (with granular set/rep/rest and weight-tracking rules), accept/decline client requests, and manage daily appointment schedules.
+* **Desk Workers:** Check member subscription statuses in real-time and execute manual door overrides with audit logging.
+* **Admins:** Comprehensive HR panel to dynamically hire/fire staff (assign roles) and view system-wide analytics.
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-2. Start the development server:
-   ```bash
-   npm run dev
-   ```
-3. Open `http://localhost:5173` in your browser.
+---
 
-*(Note: The FastAPI backend must be running on `localhost:8000` for the frontend to retrieve data).*
+## Tech Stack
+
+* **Core:** React 19, TypeScript, Vite
+* **Routing:** React Router DOM v7
+* **Data Fetching & Caching:** TanStack React Query v5, Axios
+* **Styling:** Tailwind CSS (Fully configured for Dark/Light mode)
+* **Data Visualization:** Recharts (For strength progress tracking)
+* **Utilities:** qrcode.react (Dynamic QR generation), react-google-recaptcha
+
+---
+
+## Getting Started
+
+### 1. Prerequisites
+Ensure you have [Node.js](https://nodejs.org/) (v18 or higher) installed.
+
+### 2. Installation
+Clone the repository and install the dependencies:
+```bash
+npm install
+```
+
+### 3. Environment Variables
+Create a `.env` file in the root of the project and configure the following variables:
+```env
+# The base URL of your FastAPI backend
+VITE_API_BASE_URL=http://localhost:8000/api
+
+# Security configurations
+VITE_FEATURE_RECAPTCHA=true
+VITE_RECAPTCHA_SITE_KEY=your_google_recaptcha_site_key_here
+```
+
+### 4. Run the Development Server
+Start the Vite development server:
+```bash
+npm run dev
+```
+The application will be available at `http://localhost:5173`.
+
+---
+
+## Recent Updates (Latest PR Highlights)
+
+* **QR Logic Overhaul:** Migrated from auto-polling to manual, intent-based (ENTRY/EXIT) QR generation.
+* **ESLint Zero Warnings:** Refactored interval timers with lazy initialization to eliminate cascading render bugs and strictly typed all variables.
+* **Persistent States:** Implemented localStorage syncing for active QR tokens and rate-limit cooldowns, ensuring flawless UX even if the user reloads the browser.
+* **UI Polish:** Replaced static placeholders with professional frosted-glass UI components and blurred QR placeholders for inactive states.
