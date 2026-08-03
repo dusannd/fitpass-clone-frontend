@@ -31,11 +31,7 @@ export default function Login() {
     // reCAPTCHA Reference to manually trigger it
     const recaptchaRef = useRef<ReCAPTCHA>(null);
 
-    // SMART REDIRECT: If already logged in, go to dashboard
-    useEffect(() => {
-        const token = localStorage.getItem("token");
-        if (token) navigate("/dashboard", { replace: true });
-    }, [navigate]);
+
 
     // RATE LIMITING COOLDOWN TIMER: Counts down from X seconds when hit with 429
     useEffect(() => {
@@ -93,16 +89,14 @@ export default function Login() {
                 recaptchaRef.current.reset(); // Reset it for future attempts
             }
 
-            // 5. Send data to Backend
-            const response = await api.post("/users/login", {
+            await api.post("/users/login", {
                 email,
                 password,
-                extra_info: extraInfo, // Honeypot trap
+                extra_info: extraInfo,
                 recaptcha_token: recaptchaToken
             });
 
-            // 6. Success! Save token and redirect
-            localStorage.setItem("token", response.data.access_token);
+            // 6. Success! Redirect (browser već ima cookie)
             navigate("/dashboard");
 
         } catch (err: unknown) {

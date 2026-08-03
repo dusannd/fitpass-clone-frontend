@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import type { FormEvent } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import axios from "axios";
@@ -35,11 +35,7 @@ export default function Register() {
     // reCAPTCHA Reference
     const recaptchaRef = useRef<ReCAPTCHA>(null);
 
-    // SMART REDIRECT: If already logged in, go to dashboard
-    useEffect(() => {
-        const token = localStorage.getItem("token");
-        if (token) navigate("/dashboard", { replace: true });
-    }, [navigate]);
+
 
     // --- PASSWORD STRENGTH LOGIC ---
     const calculateStrength = (pass: string) => {
