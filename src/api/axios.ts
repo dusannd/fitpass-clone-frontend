@@ -1,21 +1,25 @@
+// src/api/axios.ts
 import axios from 'axios';
 
-// Pravimo "naš" axios koji uvek gađa tvoj FastAPI backend
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+
 export const api = axios.create({
-    baseURL: 'http://localhost:8000/api', // Ovo je port tvog backenda
+    baseURL: BASE_URL,
+    // CRITICAL: This tells Axios to send the HttpOnly cookie with every request
+    withCredentials: true,
 });
 
-// Interceptor - presreće svaki zahtev PRE nego što ode na server
-api.interceptors.request.use((config) => {
-    // Tražimo token koji ćemo kasnije čuvati u browseru prilikom logina
-    const token = localStorage.getItem('token');
-
-    // Ako token postoji, zalepi ga u header
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+// We can remove the request interceptor entirely!
+// Instead, let's add a response interceptor to handle global 401 Unauthorized errors (session expired)
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            // If the backend says the token is invalid/missing, push user to login
+            if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+                window.location.href = '/login';
+            }
+        }
+        return Promise.reject(error);
     }
-
-    return config;
-}, (error) => {
-    return Promise.reject(error);
-});
+);

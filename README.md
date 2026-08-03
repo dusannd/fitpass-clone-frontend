@@ -1,75 +1,75 @@
-# React + TypeScript + Vite
+# FitPass Clone - Frontend Application
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A modern, high-performance React frontend for the FitPass Clone / Gym Management system. Built with React 19, TypeScript, Vite, and Tailwind CSS, this application delivers a seamless, secure, and role-driven experience for gym members, personal trainers, desk workers, and administrators.
 
-Currently, two official plugins are available:
+![React](https://img.shields.io/badge/React-19-blue.svg?style=flat&logo=react)
+![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg?style=flat&logo=typescript)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?style=flat&logo=tailwind-css)
+![Vite](https://img.shields.io/badge/Vite-Lightning_Fast-646CFF.svg?style=flat&logo=vite)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## Key Features & Capabilities
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Advanced Security & Anti-Fraud
+* **Bulletproof QR Gym Access:** Turnstile entry/exit system via QR codes. Features 5-minute TTLs, localStorage state persistence (survives page refreshes), and responsive UI cooldowns parsing 429 Too Many Requests API limits.
+* **Real-time WebSocket Sync:** Listens for turnstile scanner events. Once scanned, the QR code is instantly wiped from memory and the screen to prevent screenshot/replay attacks.
+* **Bot Protection:** Registration and Login forms are secured with invisible Honeypot fields and Google reCAPTCHA v3.
+* **Secure Sessions:** Fully configured to use HTTP-Only JWT cookies via Axios interceptors, automatically redirecting users upon session expiration (401 Unauthorized).
 
-## Expanding the ESLint configuration
+### Role-Based Access Control (RBAC)
+* **Members:** Buy subscriptions via Stripe, request 1-on-1 coaching, book sessions, and track workout progress via interactive area charts (Recharts).
+* **Trainers:** Create public/private workout plans (with granular set/rep/rest and weight-tracking rules), accept/decline client requests, and manage daily appointment schedules.
+* **Desk Workers:** Check member subscription statuses in real-time and execute manual door overrides with audit logging.
+* **Admins:** Comprehensive HR panel to dynamically hire/fire staff (assign roles) and view system-wide analytics.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+---
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Tech Stack
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+* **Core:** React 19, TypeScript, Vite
+* **Routing:** React Router DOM v7
+* **Data Fetching & Caching:** TanStack React Query v5, Axios
+* **Styling:** Tailwind CSS (Fully configured for Dark/Light mode)
+* **Data Visualization:** Recharts (For strength progress tracking)
+* **Utilities:** qrcode.react (Dynamic QR generation), react-google-recaptcha
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+---
 
+## Getting Started
+
+### 1. Prerequisites
+Ensure you have [Node.js](https://nodejs.org/) (v18 or higher) installed.
+
+### 2. Installation
+Clone the repository and install the dependencies:
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 3. Environment Variables
+Create a `.env` file in the root of the project and configure the following variables:
+```env
+# The base URL of your FastAPI backend
+VITE_API_BASE_URL=http://localhost:8000/api
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+# Security configurations
+VITE_FEATURE_RECAPTCHA=true
+VITE_RECAPTCHA_SITE_KEY=your_google_recaptcha_site_key_here
 ```
+
+### 4. Run the Development Server
+Start the Vite development server:
+```bash
+npm run dev
+```
+The application will be available at `http://localhost:5173`.
+
+---
+
+## Recent Updates (Latest PR Highlights)
+
+* **QR Logic Overhaul:** Migrated from auto-polling to manual, intent-based (ENTRY/EXIT) QR generation.
+* **ESLint Zero Warnings:** Refactored interval timers with lazy initialization to eliminate cascading render bugs and strictly typed all variables.
+* **Persistent States:** Implemented localStorage syncing for active QR tokens and rate-limit cooldowns, ensuring flawless UX even if the user reloads the browser.
+* **UI Polish:** Replaced static placeholders with professional frosted-glass UI components and blurred QR placeholders for inactive states.

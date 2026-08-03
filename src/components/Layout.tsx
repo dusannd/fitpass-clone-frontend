@@ -1,40 +1,72 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link, Outlet, useLocation } from "react-router-dom";
+import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { api } from "../api/axios";
 
-// We define our User type here so TypeScript helps us out
+
+export interface Role {
+    id: number;
+    name: string;
+}
+
+export interface UserSubscription {
+    id: number;
+    plan_id: number;
+    start_date: string;
+    end_date: string;
+    is_active: number;
+}
+
 export interface User {
     id: number;
     email: string;
     first_name: string;
     last_name: string;
-    roles: { id: number; name: string }[];
+    roles: Role[];
+    subscriptions: UserSubscription[]; // <-- Dodali smo pretplate
 }
 
 export default function Layout() {
     const navigate = useNavigate();
-    const location = useLocation(); // To know which page is active
+    const location = useLocation();
 
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Za mobilni meni
 
-    // We check who the user is as soon as the layout loads
+    // --- DARK MODE LOGIKA ---
+    const [isDark, setIsDark] = useState(() => {
+        const savedTheme = localStorage.getItem("theme");
+        return savedTheme ? savedTheme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    });
+
     useEffect(() => {
-        const fetchProfile = async () => {
-            try {
-                const response = await api.get("/users/me");
-                setUser(response.data);
-            } catch {
+        const root = document.documentElement;
+        if (isDark) {
+            root.classList.add("dark");
+            localStorage.setItem("theme", "dark");
+        } else {
+            root.classList.remove("dark");
+            localStorage.setItem("theme", "light");
+        }
+    }, [isDark]);
 
+    const toggleTheme = () => setIsDark(!isDark);
+    // ------------------------
+
+    useEffect(() => {
+        const fetchUser = async () => {
+            try {
+                const res = await api.get("/users/me");
+                setUser(res.data);
+            } catch (err) {
+                console.error("Failed to fetch user, redirecting to login.");
                 localStorage.removeItem("token");
                 navigate("/login");
             } finally {
                 setLoading(false);
             }
         };
-
-
-        void fetchProfile();
+        fetchUser();
     }, [navigate]);
 
     const handleLogout = () => {
@@ -42,111 +74,186 @@ export default function Layout() {
         navigate("/login");
     };
 
+
+    useEffect(() => {
+        setIsMobileMenuOpen(false);
+    }, [location.pathname]);
+
     if (loading) {
         return (
-            <div className="flex h-screen items-center justify-center bg-gray-100">
-                <h2 className="text-xl font-bold text-gray-600">Loading application...</h2>
+            <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-900 transition-colors duration-200">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
             </div>
         );
     }
 
-    // Helper function to check if user has a specific role
-    const hasRole = (roleName: string) => {
-        return user?.roles.some((r) => r.name === roleName);
-    };
+    if (!user) return null;
+
+
+    const roles = user.roles.map(r => r.name);
+    const isMember = roles.includes("member");
+    const isAdmin = roles.includes("admin");
+    const isTrainer = roles.includes("trainer");
+    const isWorker = roles.includes("worker");
+
+
+    const now = new Date();
+    const hasActiveSubscription = user.subscriptions?.some(
+        sub => sub.is_active === 1 && new Date(sub.end_date) > now
+    );
+
+    const navLinkClass = (path: string) =>
+        `block px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
+            location.pathname === path
+                ? "bg-blue-600 text-white"
+                : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white"
+        }`;
 
     return (
-        <div className="flex h-screen bg-gray-100 font-sans text-gray-900">
+        <div className="min-h-screen flex bg-gray-50 dark:bg-slate-950 transition-colors duration-200">
 
-            {/* SIDEBAR (Left Menu) */}
-            <aside className="w-64 bg-gray-900 text-white flex flex-col shadow-lg">
-                <div className="p-6 text-center border-b border-gray-800">
-                    <h1 className="text-2xl font-black text-blue-500 tracking-wider">FITPASS</h1>
-                    <p className="text-xs text-gray-400 mt-1 uppercase">Clone System</p>
+            {/* OVERLAY ZA MOBILNI (Zatamnjuje pozadinu kad je meni otvoren) */}
+            {isMobileMenuOpen && (
+                <div
+                    className="fixed inset-0 bg-black/50 z-40 md:hidden"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                ></div>
+            )}
+
+            {/* SIDEBAR */}
+            <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col transition-transform duration-300 md:static md:translate-x-0 ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`}>
+
+                {/* Logo i Status Članarine */}
+                <div className="p-6 border-b border-gray-100 dark:border-slate-800/50">
+                    <h1 className="text-2xl font-black text-blue-600 dark:text-blue-500 tracking-tighter mb-4">
+                        FitPass<span className="text-gray-900 dark:text-white">Clone</span>
+                    </h1>
+
+                    <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-full flex items-center justify-center font-black text-lg">
+                            {user.first_name.charAt(0)}
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-sm font-bold text-gray-900 dark:text-white">
+                                {user.first_name} {user.last_name}
+                            </span>
+                            {/* BEDŽ ZA STATUS ČLANARINE */}
+                            {isMember ? (
+                                hasActiveSubscription ? (
+                                    <span className="text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full mt-0.5 w-fit">
+                                        🟢 Active Pass
+                                    </span>
+                                ) : (
+                                    <span className="text-[10px] font-black uppercase text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-900/30 px-2 py-0.5 rounded-full mt-0.5 w-fit">
+                                        🔴 No Access
+                                    </span>
+                                )
+                            ) : (
+                                <span className="text-[10px] font-black uppercase text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 px-2 py-0.5 rounded-full mt-0.5 w-fit">
+                                    Staff Account
+                                </span>
+                            )}
+                        </div>
+                    </div>
                 </div>
 
-                <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-                    {/* EVERYONE SEES DASHBOARD */}
-                    <Link
-                        to="/dashboard"
-                        className={`block px-4 py-2 rounded transition ${location.pathname === "/dashboard" ? "bg-blue-600" : "hover:bg-gray-800"}`}
-                    >
-                        🏠 Dashboard
-                    </Link>
+                <nav className="flex-1 px-4 py-6 space-y-6 overflow-y-auto">
+                    <div>
+                        <p className="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Main</p>
+                        <Link to="/dashboard" className={navLinkClass("/dashboard")}>Dashboard</Link>
+                    </div>
 
-                    {/* MEMBER LINKS */}
-                    {hasRole("member") && (
-                        <>
-                            <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Member Area</div>
-                            <Link to="/subscriptions" className={`block px-4 py-2 rounded transition ${location.pathname === "/subscriptions" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>🎫 My Subscription</Link>
-                            <Link to="/workouts" className={`block px-4 py-2 rounded transition ${location.pathname === "/workouts" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>🏋️ Workouts</Link>
-                        </>
+                    {isMember && (
+                        <div>
+                            <p className="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Member</p>
+                            <Link to="/subscriptions" className={navLinkClass("/subscriptions")}>Subscriptions</Link>
+                            <Link to="/workouts" className={navLinkClass("/workouts")}>Workouts</Link>
+                            <Link to="/coaching" className={navLinkClass("/coaching")}>Find Trainer</Link>
+                            <Link to="/appointments" className={navLinkClass("/appointments")}>My Appointments</Link>
+                        </div>
                     )}
 
-                    {/* TRAINER LINKS */}
-                    {hasRole("trainer") && (
-                        <>
-                            <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Trainer Area</div>
-                            <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">👥 My Clients</Link>
-                            <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">📅 Appointments</Link>
-                            <Link to="/trainer/plans" className={`block px-4 py-2 rounded transition ${location.pathname === "/trainer/plans" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>📝 Workout Plans</Link>
-                        </>
+                    {isTrainer && (
+                        <div>
+                            <p className="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Trainer Panel</p>
+                            <Link to="/trainer/clients" className={navLinkClass("/trainer/clients")}>My Clients</Link>
+                            <Link to="/trainer/plans" className={navLinkClass("/trainer/plans")}>Workout Plans</Link>
+                            <Link to="/trainer/appointments" className={navLinkClass("/trainer/appointments")}>Schedule</Link>
+                        </div>
                     )}
 
-                    {/* WORKER LINKS */}
-                    {hasRole("worker") && (
-                        <>
-                            <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Desk Area</div>
-                            <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">🔍 Check Access</Link>
-                        </>
+                    {isWorker && (
+                        <div>
+                            <p className="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Staff</p>
+                            <Link to="/worker/dashboard" className={navLinkClass("/worker/dashboard")}>Desk Panel</Link>
+                        </div>
                     )}
 
-                    {/* ADMIN LINKS */}
-                    {hasRole("admin") && (
-                        <>
-                            <div className="pt-4 pb-1 text-xs text-gray-500 font-bold uppercase">Admin Area</div>
-                            <Link to="/dashboard" className="block px-4 py-2 rounded hover:bg-gray-800 transition">📈 Analytics</Link>
-                            {/* OVO SMO IZMENILI */}
-                            <Link to="/admin/hr" className={`block px-4 py-2 rounded transition ${location.pathname === "/admin/hr" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>👔 HR Panel</Link>
-                            <Link to="/admin/plans" className={`block px-4 py-2 rounded transition ${location.pathname === "/admin/plans" ? "bg-blue-600 text-white" : "hover:bg-gray-800"}`}>💳 Manage Plans</Link>
-                        </>
+                    {isAdmin && (
+                        <div>
+                            <p className="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Admin</p>
+                            <Link to="/admin/analytics" className={navLinkClass("/admin/analytics")}>Analytics</Link>
+                            <Link to="/admin/plans" className={navLinkClass("/admin/plans")}>Manage Plans</Link>
+                            <Link to="/admin/hr" className={navLinkClass("/admin/hr")}>HR Panel</Link>
+                        </div>
                     )}
                 </nav>
 
-                {/* LOGOUT BUTTON AT THE BOTTOM */}
-                <div className="p-4 border-t border-gray-800">
+                <div className="p-4 border-t border-gray-200 dark:border-slate-800">
                     <button
                         onClick={handleLogout}
-                        className="w-full bg-red-600 text-white font-bold py-2 px-4 rounded hover:bg-red-700 transition"
+                        className="w-full text-left px-4 py-2 text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-xl transition-colors"
                     >
-                        Logout
+                        Log Out
                     </button>
                 </div>
             </aside>
 
-            {/* MAIN CONTENT AREA (Right Side) */}
-            <main className="flex-1 flex flex-col overflow-hidden">
+            {/* MAIN CONTENT AREA */}
+            <main className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
                 {/* TOP HEADER */}
-                <header className="bg-white shadow-sm px-8 py-4 flex justify-between items-center">
-                    <h2 className="text-xl font-semibold text-gray-800">
-                        Welcome, {user?.first_name}
-                    </h2>
-                    <div className="flex gap-2">
-                        {user?.roles.map((r) => (
-                            <span key={r.id} className="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full uppercase">
-                {r.name}
-              </span>
-                        ))}
+                <header className="h-16 shrink-0 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-4 sm:px-6 transition-colors duration-200">
+
+                    {/* HAMBURGER DUGME (Prikazuje se samo na mobilnom) */}
+                    <button
+                        onClick={() => setIsMobileMenuOpen(true)}
+                        className="md:hidden p-2 -ml-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+
+                    <div className="md:hidden font-black text-xl text-blue-600 dark:text-blue-500 ml-2">
+                        FP<span className="text-gray-900 dark:text-white">C</span>
                     </div>
+
+                    <div className="flex-1"></div>
+
+                    {/* DARK MODE TOGGLE DUGME */}
+                    <button
+                        onClick={toggleTheme}
+                        className="p-2 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-yellow-400 rounded-full hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
+                        aria-label="Toggle Dark Mode"
+                    >
+                        {isDark ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                            </svg>
+                        ) : (
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                            </svg>
+                        )}
+                    </button>
                 </header>
 
-                {/* DYNAMIC PAGE CONTENT GOES HERE */}
-                <div className="flex-1 overflow-auto p-8">
-                    {/* <Outlet /> is a magic React Router component that renders the current page inside this layout */}
+                {/* PAGE CONTENT */}
+                <div className="flex-1 p-4 sm:p-6 overflow-auto">
+                    {/* Prosleđujemo celu user strukturu (uključujući pretplate) deci rutama */}
                     <Outlet context={user} />
                 </div>
             </main>
-
         </div>
     );
 }
