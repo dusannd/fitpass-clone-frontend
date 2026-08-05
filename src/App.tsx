@@ -15,41 +15,47 @@ import MemberAppointments from "./pages/member/MemberAppointments.tsx";
 import TrainerAppointments from "./pages/trainer/TrainerAppointments.tsx";
 import WorkerDashboard from "./pages/worker/WorkerDashboard.tsx";
 import AdminAnalytics from "./pages/admin/AdminAnalytics.tsx";
-
+import WorkerScanner from "./pages/worker/WorkerScanner"; // <-- IMPORT SCANNER
 
 export default function App() {
-  return (
-      <Routes>
-        {/* PUBLIC ROUTES (No Layout) */}
-        <Route path="/" element={<Navigate to="/login" replace />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/verify-email" element={<VerifyEmail />} />
+    return (
+        <Routes>
+            {/* PUBLIC ROUTES (No Layout) */}
+            <Route path="/" element={<Navigate to="/login" replace />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
 
-        {/* PROTECTED ROUTES (Wrapped inside the Layout sidebar) */}
-        <Route element={<Layout />}>
-          {/* All routes inside here will have the sidebar menu */}
-          <Route path="/dashboard" element={<Dashboard />} />
+            {/* PROTECTED ROUTES (Wrapped inside the Layout sidebar) */}
+            <Route element={<Layout />}>
+                {/* All routes inside here will have the sidebar menu */}
+                <Route path="/dashboard" element={<Dashboard />} />
 
-          {/* MEMBER ROUTES */}
-          <Route path="/subscriptions" element={<Subscriptions />} />
-            <Route path="/workouts" element={<Workouts />} />
-            <Route path="/coaching" element={<MemberCoaching />} />
-            <Route path="/appointments" element={<MemberAppointments />} />
+                {/* MEMBER ROUTES */}
+                <Route path="/subscriptions" element={<Subscriptions />} />
+                <Route path="/workouts" element={<Workouts />} />
+                <Route path="/coaching" element={<MemberCoaching />} />
+                <Route path="/appointments" element={<MemberAppointments />} />
 
-            {/* WORKER ROUTES */}
-            <Route path="/worker/dashboard" element={<WorkerDashboard />} />
+                {/* WORKER ROUTES */}
+                <Route path="/worker/dashboard" element={<WorkerDashboard />} />
+                {/*
+              ROUTE DEFINITION ONLY: This tells React what component to load
+              when the URL changes to /worker/scanner
+            */}
+                <Route path="/worker/scanner" element={<WorkerScanner />} />
 
-            {/* ADMIN ROUTES */}
-          <Route path="/admin/plans" element={<ManagePlans />} />
-          <Route path="/admin/hr" element={<HRPanel />} />
-            <Route path="/admin/analytics" element={<AdminAnalytics />} />
-          {/* TRAINER ROUTES */}
-          <Route path="/trainer/plans" element={<TrainerPlans />} />
-            <Route path="/trainer/clients" element={<TrainerClients />} />
-            <Route path="/trainer/appointments" element={<TrainerAppointments />} />
+                {/* ADMIN ROUTES */}
+                <Route path="/admin/plans" element={<ManagePlans />} />
+                <Route path="/admin/hr" element={<HRPanel />} />
+                <Route path="/admin/analytics" element={<AdminAnalytics />} />
 
-        </Route>
-      </Routes>
-  );
+                {/* TRAINER ROUTES */}
+                <Route path="/trainer/plans" element={<TrainerPlans />} />
+                <Route path="/trainer/clients" element={<TrainerClients />} />
+                <Route path="/trainer/appointments" element={<TrainerAppointments />} />
+
+            </Route>
+        </Routes>
+    );
 }

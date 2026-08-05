@@ -186,6 +186,12 @@ export default function Layout() {
                         <div>
                             <p className="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Staff</p>
                             <Link to="/worker/dashboard" className={navLinkClass("/worker/dashboard")}>Desk Panel</Link>
+                            <Link
+                                to="/worker/scanner"
+                                className="block px-4 py-3 rounded-xl text-sm font-bold text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-slate-800 transition-all"
+                            >
+                                Turnstile Scanner
+                            </Link>
                         </div>
                     )}
 
