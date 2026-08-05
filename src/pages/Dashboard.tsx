@@ -15,50 +15,40 @@ interface QrState {
     cooldownEndsAt: number;
 }
 
-// Helper function for Lazy Initialization
 const getInitialQrState = (): QrState | null => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-        try {
-            return JSON.parse(saved);
-        } catch {
-            // Fixes the "unused 'e'" error
-            localStorage.removeItem(STORAGE_KEY);
-        }
+        try { return JSON.parse(saved); }
+        catch { localStorage.removeItem(STORAGE_KEY); }
     }
     return null;
 };
 
 export default function Dashboard() {
     const user = useOutletContext<User>();
-
     const isMember = user.roles.some(r => r.name === "member");
     const isWorker = user.roles.some(r => r.name === "worker");
     const isTrainer = user.roles.some(r => r.name === "trainer");
 
-    // --- 1. STATE WITH LAZY INITIALIZATION (Fixes Cascading Renders) ---
+    // --- REAL-TIME STATUS STATE ---
+    const [physicalStatus, setPhysicalStatus] = useState<"INSIDE" | "OUTSIDE" | "LOADING">("LOADING");
+    const [enteredAt, setEnteredAt] = useState<string | null>(null);
+    const [sessionDuration, setSessionDuration] = useState<string>("");
+
+    // --- QR STATE WITH LAZY INITIALIZATION ---
     const [qrToken, setQrToken] = useState<string>(() => {
         const state = getInitialQrState();
         return (state && state.expiresAt > Date.now()) ? state.token : "";
     });
 
-    const [actionType, setActionType] = useState<"ENTRY" | "EXIT">(() => {
-        const state = getInitialQrState();
-        return (state && state.expiresAt > Date.now()) ? state.actionType : "ENTRY";
-    });
-
     const [timeLeft, setTimeLeft] = useState<number>(() => {
         const state = getInitialQrState();
-        return (state && state.expiresAt > Date.now())
-            ? Math.ceil((state.expiresAt - Date.now()) / 1000)
-            : 0;
+        return (state && state.expiresAt > Date.now()) ? Math.ceil((state.expiresAt - Date.now()) / 1000) : 0;
     });
 
     const [cooldownLeft, setCooldownLeft] = useState<number>(() => {
         const state = getInitialQrState();
-        return (state && state.cooldownEndsAt > Date.now())
-            ? Math.ceil((state.cooldownEndsAt - Date.now()) / 1000)
-            : 0;
+        return (state && state.cooldownEndsAt > Date.now()) ? Math.ceil((state.cooldownEndsAt - Date.now()) / 1000) : 0;
     });
 
     const [isGenerating, setIsGenerating] = useState<boolean>(false);
@@ -68,14 +58,54 @@ export default function Dashboard() {
 
     const wsRef = useRef<WebSocket | null>(null);
 
-    // --- 2. MASTER TIMER LOGIC ---
+    // --- 1. FETCH PHYSICAL STATUS ---
+    const fetchStatus = useCallback(async () => {
+        if (!isMember) return;
+        try {
+            const res = await api.get("/access/my-status");
+            setPhysicalStatus(res.data.status);
+            setEnteredAt(res.data.entered_at);
+        } catch (err) {
+            console.error("Failed to fetch physical status", err);
+        }
+    }, [isMember]);
+
+    useEffect(() => {
+        void fetchStatus();
+    }, [fetchStatus]);
+
+    // --- 2. SESSION DURATION TIMER ---
+    useEffect(() => {
+        if (physicalStatus !== "INSIDE" || !enteredAt) {
+            // FIX: Wrap in setTimeout to prevent synchronous state update inside the effect
+            const resetTimer = setTimeout(() => setSessionDuration(""), 0);
+            return () => clearTimeout(resetTimer);
+        }
+
+        const updateDuration = () => {
+            const diffMs = Date.now() - new Date(enteredAt).getTime();
+            const hours = Math.floor(diffMs / (1000 * 60 * 60));
+            const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
+            setSessionDuration(hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`);
+        };
+
+        // FIX: Execute asynchronously to prevent cascading renders
+        const timeoutId = setTimeout(updateDuration, 0);
+        const intervalId = setInterval(updateDuration, 60000);
+
+        return () => {
+            clearTimeout(timeoutId);
+            clearInterval(intervalId);
+        };
+    }, [physicalStatus, enteredAt]);
+
+    // --- 3. MASTER QR & COOLDOWN TIMER ---
     useEffect(() => {
         if (!isMember) return;
 
         const interval = setInterval(() => {
             const savedState = localStorage.getItem(STORAGE_KEY);
             if (!savedState) {
-                // Functional updates prevent unnecessary re-renders
                 setTimeLeft(prev => prev > 0 ? 0 : prev);
                 setCooldownLeft(prev => prev > 0 ? 0 : prev);
                 return;
@@ -84,13 +114,10 @@ export default function Dashboard() {
             const parsed: QrState = JSON.parse(savedState);
             const now = Date.now();
 
-            // Handle QR Expiration countdown
             if (parsed.expiresAt > now) {
                 setTimeLeft(Math.ceil((parsed.expiresAt - now) / 1000));
             } else {
                 setTimeLeft(prev => prev > 0 ? 0 : prev);
-
-                // Only clear token and set error if a token actually exists
                 setQrToken(prev => {
                     if (prev !== "") {
                         setError("QR Code expired. Please generate a new one.");
@@ -98,24 +125,20 @@ export default function Dashboard() {
                     }
                     return prev;
                 });
-
                 localStorage.removeItem(STORAGE_KEY);
             }
 
-            // Handle Cooldown countdown
             if (parsed.cooldownEndsAt > now) {
                 setCooldownLeft(Math.ceil((parsed.cooldownEndsAt - now) / 1000));
             } else {
                 setCooldownLeft(prev => prev > 0 ? 0 : prev);
             }
-
         }, 1000);
 
         return () => clearInterval(interval);
     }, [isMember]);
 
-
-    // --- 3. WEBSOCKET CONNECTION ---
+    // --- 4. WEBSOCKET CONNECTION ---
     useEffect(() => {
         if (!isMember) return;
 
@@ -127,40 +150,41 @@ export default function Dashboard() {
             if (data.type === "ACCESS_EVENT") {
                 if (data.access_granted) {
                     setAccessGranted(true);
-                    setScanMessage(`Access Granted: ${data.reason}`);
+                    setScanMessage(data.action_type === "ENTRY" ? "Welcome in!" : "Goodbye!");
 
-                    // Clear the token immediately from memory and storage
+                    // Instantly clear QR code
                     setQrToken("");
                     setTimeLeft(0);
                     localStorage.removeItem(STORAGE_KEY);
 
-                    // Revert back to generate state after 4 seconds
+                    // Refresh physical state (Transforms Check-In to Check-Out UI)
+                    void fetchStatus();
+
                     setTimeout(() => {
                         setAccessGranted(false);
                         setScanMessage("");
                     }, 4000);
                 } else {
-                    setError(`Scanned & Denied: ${data.reason}`);
+                    setError(`Denied: ${data.reason}`);
                 }
             }
         };
 
         return () => {
-            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-                ws.close();
-            }
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
         };
-    }, [isMember]);
+    }, [isMember, fetchStatus]);
 
-
-    // --- 4. MANUAL QR GENERATION ---
+    // --- 5. QR GENERATION ---
     const handleGenerateQr = useCallback(async () => {
         setIsGenerating(true);
         setError("");
 
-        try {
-            const res = await api.post("/access/generate", { action_type: actionType });
+        // Smart intent resolution based on actual physical state
+        const intentType = physicalStatus === "INSIDE" ? "EXIT" : "ENTRY";
 
+        try {
+            const res = await api.post("/access/generate", { action_type: intentType });
             const token = res.data.qr_token;
             const expiresInSec = res.data.expires_in_seconds || 300;
             const now = Date.now();
@@ -168,174 +192,141 @@ export default function Dashboard() {
             const newState: QrState = {
                 token: token,
                 expiresAt: now + (expiresInSec * 1000),
-                cooldownEndsAt: now + (30 * 1000), // 30 seconds rate limit cooldown
-                actionType: actionType
+                cooldownEndsAt: now + (30 * 1000),
+                actionType: intentType
             };
 
-            // Save to localStorage so it survives refresh!
             localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-
             setQrToken(token);
             setTimeLeft(expiresInSec);
             setCooldownLeft(30);
-
         } catch (err: unknown) {
             if (axios.isAxiosError(err) && err.response) {
                 if (err.response.status === 429) {
-                    // Extract wait time from backend response
                     const msg = err.response.data.detail;
-                    const match = msg.match(/\d+/);
-                    const sec = match ? parseInt(match[0]) : 30;
+                    const sec = parseInt(msg.match(/\d+/)?.[0] || "30");
+                    const saved = localStorage.getItem(STORAGE_KEY);
+                    const parsed = saved ? JSON.parse(saved) : { expiresAt: 0, token: "", actionType: intentType };
 
-                    const savedState = localStorage.getItem(STORAGE_KEY);
-                    const parsed = savedState ? JSON.parse(savedState) : { expiresAt: 0, token: "", actionType };
-
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-                        ...parsed,
-                        cooldownEndsAt: Date.now() + (sec * 1000)
-                    }));
-
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, cooldownEndsAt: Date.now() + (sec * 1000) }));
                     setCooldownLeft(sec);
                     setError(msg);
                 } else {
                     setError(err.response.data.detail);
                 }
-            } else {
-                setError("An unexpected error occurred.");
             }
         } finally {
             setIsGenerating(false);
         }
-    }, [actionType]);
+    }, [physicalStatus]);
 
-    // --- 5. RENDER FUNCTIONS ---
     return (
         <div className="flex flex-col gap-6 max-w-4xl mx-auto">
             {/* WELCOME BANNER */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800 transition-colors duration-200">
-                <h1 className="text-2xl font-bold text-gray-800 dark:text-white mb-2 transition-colors">
-                    Welcome back, {user.first_name}! 👋
-                </h1>
-                <p className="text-gray-600 dark:text-slate-400 transition-colors">
-                    Your privileges: <span className="font-bold text-blue-600 dark:text-blue-400 uppercase">{user.roles.map(r => r.name).join(", ")}</span>
-                </p>
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800 flex justify-between items-center transition-colors">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-800 dark:text-white mb-1">
+                        Welcome back, {user.first_name}! 👋
+                    </h1>
+                    <p className="text-gray-500 dark:text-slate-400 text-sm">Ready to crush your goals today?</p>
+                </div>
             </div>
 
-            {/* MEMBER SECTION - DYNAMIC QR CODE */}
-            {isMember && (
-                <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 sm:p-8 border border-gray-200 dark:border-slate-800 flex flex-col md:flex-row items-center gap-8 justify-center text-center md:text-left transition-colors duration-200">
+            {/* MEMBER SECTION - DYNAMIC SMART QR CODE */}
+            {isMember && physicalStatus !== "LOADING" && (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 sm:p-8 border border-gray-200 dark:border-slate-800 flex flex-col md:flex-row items-center gap-8 justify-between transition-colors">
 
-                    <div className="flex-1 w-full flex flex-col items-center md:items-start">
-                        <div className="flex flex-col sm:flex-row justify-between items-center w-full mb-6 gap-4">
-                            <h2 className="text-2xl font-black text-gray-800 dark:text-white transition-colors">Gym Access</h2>
+                    {/* LEFT PANEL - UI LOGIC */}
+                    <div className="flex-1 w-full flex flex-col items-center md:items-start text-center md:text-left">
 
-                            {/* ACTION TYPE TOGGLE (ENTRY vs EXIT) */}
-                            <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-lg w-full sm:w-auto">
-                                <button
-                                    onClick={() => { setActionType("ENTRY"); setQrToken(""); setError(""); localStorage.removeItem(STORAGE_KEY); }}
-                                    disabled={!!qrToken}
-                                    className={`flex-1 px-4 py-2 rounded-md text-xs font-bold transition-all ${actionType === "ENTRY" ? "bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm" : "text-gray-500 hover:text-gray-700"} ${!!qrToken && "opacity-50 cursor-not-allowed"}`}
-                                >
-                                    Check In
-                                </button>
-                                <button
-                                    onClick={() => { setActionType("EXIT"); setQrToken(""); setError(""); localStorage.removeItem(STORAGE_KEY); }}
-                                    disabled={!!qrToken}
-                                    className={`flex-1 px-4 py-2 rounded-md text-xs font-bold transition-all ${actionType === "EXIT" ? "bg-white dark:bg-slate-700 text-rose-600 dark:text-rose-400 shadow-sm" : "text-gray-500 hover:text-gray-700"} ${!!qrToken && "opacity-50 cursor-not-allowed"}`}
-                                >
-                                    Check Out
-                                </button>
-                            </div>
+                        {/* DYNAMIC STATUS BADGE */}
+                        <div className="mb-4">
+                            {physicalStatus === "INSIDE" ? (
+                                <div className="inline-flex items-center gap-2 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-4 py-2 rounded-full border border-emerald-200 dark:border-emerald-800">
+                                    <span className="relative flex h-3 w-3">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                                    </span>
+                                    <span className="font-bold text-sm tracking-wide uppercase">You are inside</span>
+                                    {sessionDuration && <span className="text-emerald-900 dark:text-emerald-200 text-xs font-black ml-1 bg-emerald-200 dark:bg-emerald-800 px-2 py-0.5 rounded-lg">{sessionDuration}</span>}
+                                </div>
+                            ) : (
+                                <div className="inline-flex items-center gap-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-700">
+                                    <span className="h-2 w-2 rounded-full bg-slate-400"></span>
+                                    <span className="font-bold text-sm tracking-wide uppercase">You are outside</span>
+                                </div>
+                            )}
                         </div>
 
-                        <p className="text-gray-600 dark:text-slate-400 mb-6 transition-colors text-sm">
-                            Generate a secure QR code and hold your screen up to the turnstile scanner.
+                        <h2 className="text-3xl font-black text-gray-900 dark:text-white mb-2">
+                            {physicalStatus === "INSIDE" ? "Ready to leave?" : "Enter the Gym"}
+                        </h2>
+                        <p className="text-gray-500 dark:text-slate-400 mb-8 text-sm">
+                            {physicalStatus === "INSIDE"
+                                ? "Generate an exit code and scan it at the turnstiles to checkout."
+                                : "Generate an entry code and hold your phone to the scanner."}
                         </p>
 
-                        {/* STATUS MESSAGES */}
+                        {/* MESSAGES */}
                         {error && !qrToken && (
-                            <div className="w-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 p-4 rounded-xl font-bold border border-red-200 dark:border-red-800 transition-colors mb-4 text-sm text-left">
+                            <div className="w-full bg-red-100 text-red-700 p-4 rounded-xl font-bold border border-red-200 mb-4 text-sm text-left">
                                 {error}
                             </div>
                         )}
 
                         {accessGranted && (
-                            <div className="w-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 p-4 rounded-xl font-bold border border-emerald-200 dark:border-emerald-800 transition-colors animate-pulse mb-4">
+                            <div className="w-full bg-emerald-100 text-emerald-800 p-4 rounded-xl font-bold border border-emerald-200 animate-pulse mb-4 text-center">
                                 ✅ {scanMessage}
                             </div>
                         )}
 
-                        {/* MANUAL GENERATE BUTTON */}
+                        {/* GENERATE BUTTON */}
                         {!qrToken && !accessGranted && (
                             <button
                                 onClick={() => void handleGenerateQr()}
                                 disabled={isGenerating || cooldownLeft > 0}
-                                className={`w-full text-white font-black py-4 px-4 rounded-xl transition-all shadow-md flex justify-center items-center gap-2 ${
+                                className={`w-full font-black py-4 px-4 rounded-xl transition-all shadow-md flex justify-center items-center gap-2 text-white ${
                                     cooldownLeft > 0
                                         ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed opacity-80"
-                                        : actionType === "ENTRY"
-                                            ? "bg-blue-600 hover:bg-blue-700"
-                                            : "bg-rose-600 hover:bg-rose-700"
+                                        : physicalStatus === "OUTSIDE"
+                                            ? "bg-blue-600 hover:bg-blue-700 hover:-translate-y-0.5"
+                                            : "bg-rose-600 hover:bg-rose-700 hover:-translate-y-0.5"
                                 }`}
                             >
-                                {isGenerating
-                                    ? "Generating..."
-                                    : cooldownLeft > 0
-                                        ? `Wait ${cooldownLeft}s`
-                                        : `Generate ${actionType} Code`
-                                }
+                                {isGenerating ? "Generating..." : cooldownLeft > 0 ? `Wait ${cooldownLeft}s` : physicalStatus === "OUTSIDE" ? "Generate Check In QR" : "Generate Check Out QR"}
                             </button>
                         )}
 
-                        {/* TIMER */}
+                        {/* ACTIVE TOKEN TIMER */}
                         {qrToken && !accessGranted && (
-                            <div className={`w-full flex justify-between items-center px-5 py-4 rounded-xl font-bold text-sm border transition-colors ${
-                                actionType === "ENTRY"
-                                    ? "bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800/50"
-                                    : "bg-rose-50 dark:bg-rose-900/20 text-rose-800 dark:text-rose-300 border-rose-200 dark:border-rose-800/50"
-                            }`}>
-                                <span className="flex items-center gap-2">
-                                    <span className="relative flex h-3 w-3">
-                                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${actionType === "ENTRY" ? "bg-blue-400" : "bg-rose-400"}`}></span>
-                                      <span className={`relative inline-flex rounded-full h-3 w-3 ${actionType === "ENTRY" ? "bg-blue-500" : "bg-rose-500"}`}></span>
-                                    </span>
-                                    Code active
-                                </span>
-                                <span className="text-xl font-black tabular-nums">
+                            <div className={`w-full flex justify-between items-center px-6 py-4 rounded-xl font-bold border ${physicalStatus === "OUTSIDE" ? "bg-blue-50 text-blue-800 border-blue-200" : "bg-rose-50 text-rose-800 border-rose-200"}`}>
+                                <span>Code active for</span>
+                                <span className="text-2xl font-black tabular-nums">
                                     {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
                                 </span>
                             </div>
                         )}
                     </div>
 
-                    {/* QR CODE DISPLAY AREA */}
-                    <div className="relative bg-white dark:bg-slate-100 p-4 rounded-2xl shadow-md border-4 border-gray-100 dark:border-slate-700 transition-colors flex items-center justify-center h-[230px] w-[230px] shrink-0 overflow-hidden">
-
+                    {/* RIGHT PANEL - QR CODE UI */}
+                    <div className="relative bg-white dark:bg-slate-100 p-4 rounded-[2rem] shadow-xl border-8 border-gray-50 dark:border-slate-800 transition-colors flex items-center justify-center h-[260px] w-[260px] shrink-0 overflow-hidden">
                         {accessGranted ? (
                             <div className="flex flex-col items-center animate-bounce z-10">
                                 <span className="text-6xl">🔓</span>
-                                <span className="text-emerald-600 font-black mt-2 text-xl tracking-tight">OPEN</span>
+                                <span className="text-emerald-600 font-black mt-3 text-2xl tracking-tight">OPEN</span>
                             </div>
                         ) : qrToken ? (
                             <div className="z-10 animate-in fade-in zoom-in duration-300">
-                                <QRCodeSVG
-                                    value={qrToken}
-                                    size={190}
-                                    fgColor={actionType === "ENTRY" ? "#0f172a" : "#9f1239"}
-                                />
+                                <QRCodeSVG value={qrToken} size={200} fgColor={physicalStatus === "OUTSIDE" ? "#0f172a" : "#9f1239"} />
                             </div>
                         ) : (
-                            // SLEEK PLACEHOLDER UI (Replaces the ugly emoji)
                             <>
-                                <div className="absolute inset-0 flex items-center justify-center opacity-10 filter blur-[2px] pointer-events-none">
-                                    <QRCodeSVG value="https://fitpass.example/placeholder" size={190} fgColor="#000000" />
+                                <div className="absolute inset-0 flex items-center justify-center opacity-10 filter blur-[3px] pointer-events-none">
+                                    <QRCodeSVG value="locked" size={200} fgColor="#000000" />
                                 </div>
-                                <div className="z-10 flex flex-col items-center justify-center">
-                                    <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm px-4 py-2 rounded-xl border border-gray-200 dark:border-slate-700 shadow-sm">
-                                        <span className="font-bold text-sm text-gray-500 dark:text-gray-400 tracking-wide uppercase">
-                                            Code Inactive
-                                        </span>
-                                    </div>
+                                <div className="z-10 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-6 py-3 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm flex flex-col items-center">
+                                    <span className="text-xl mb-1">🔒</span>
+                                    <span className="font-black text-xs text-gray-500 dark:text-gray-400 tracking-widest uppercase">Locked</span>
                                 </div>
                             </>
                         )}
@@ -343,18 +334,18 @@ export default function Dashboard() {
                 </div>
             )}
 
-            {/* QUICK LINKS FOR STAFF */}
+            {/* QUICK LINKS */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {isWorker && (
-                    <Link to="/worker/dashboard" className="bg-gradient-to-br from-gray-800 to-gray-900 dark:from-slate-800 dark:to-slate-950 text-white rounded-2xl p-6 shadow-sm hover:shadow-md transition border border-transparent dark:border-slate-800 flex flex-col justify-center">
-                        <h3 className="font-bold text-lg mb-1">Desk Worker Panel</h3>
-                        <p className="text-gray-300 text-sm">Verify user statuses and manually open doors.</p>
+                    <Link to="/worker/dashboard" className="bg-gradient-to-br from-gray-800 to-gray-950 text-white rounded-2xl p-6 shadow-md hover:-translate-y-1 transition duration-300">
+                        <h3 className="font-bold text-xl mb-1">Desk Worker Panel</h3>
+                        <p className="text-gray-400 text-sm">View currently inside members and manage doors.</p>
                     </Link>
                 )}
                 {isTrainer && (
-                    <Link to="/trainer/clients" className="bg-gradient-to-br from-blue-600 to-blue-800 dark:from-blue-700 dark:to-blue-950 text-white rounded-2xl p-6 shadow-sm hover:shadow-md transition border border-transparent dark:border-blue-900 flex flex-col justify-center">
-                        <h3 className="font-bold text-lg mb-1">My Clients</h3>
-                        <p className="text-blue-100 text-sm">Manage pending coaching requests and active clients.</p>
+                    <Link to="/trainer/clients" className="bg-gradient-to-br from-blue-700 to-blue-900 text-white rounded-2xl p-6 shadow-md hover:-translate-y-1 transition duration-300">
+                        <h3 className="font-bold text-xl mb-1">My Clients</h3>
+                        <p className="text-blue-200 text-sm">Manage pending coaching requests and active clients.</p>
                     </Link>
                 )}
             </div>
