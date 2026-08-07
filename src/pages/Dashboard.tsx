@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useOutletContext, Link } from "react-router-dom";
+import { useOutletContext, Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import axios from "axios";
 import { api } from "../api/axios";
@@ -26,9 +27,36 @@ const getInitialQrState = (): QrState | null => {
 
 export default function Dashboard() {
     const user = useOutletContext<User>();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const queryClient = useQueryClient();
     const isMember = user.roles.some(r => r.name === "member");
     const isWorker = user.roles.some(r => r.name === "worker");
     const isTrainer = user.roles.some(r => r.name === "trainer");
+
+    // --- STRIPE CHECKOUT SUCCESS HANDLING ---
+    // Read the flag from the URL during the initial render (lazy initializer)
+    // rather than setting it inside the effect below, so mounting doesn't
+    // trigger an extra synchronous state update/re-render.
+    const [showPaymentSuccess, setShowPaymentSuccess] = useState(
+        () => searchParams.get("payment") === "success"
+    );
+
+    useEffect(() => {
+        if (!showPaymentSuccess) return;
+
+        // CRITICAL: The Stripe webhook that activates the subscription can land
+        // slightly after the browser redirect back here. Invalidate the cached
+        // user profile so Layout/Dashboard refetch and pick up the new
+        // subscription instead of showing stale "no active plan" state.
+        void queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+
+        navigate("/dashboard", { replace: true });
+
+        const timeoutId = setTimeout(() => setShowPaymentSuccess(false), 6000);
+        return () => clearTimeout(timeoutId);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // --- REAL-TIME STATUS STATE ---
     const [physicalStatus, setPhysicalStatus] = useState<"INSIDE" | "OUTSIDE" | "LOADING">("LOADING");
@@ -148,6 +176,15 @@ export default function Dashboard() {
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             if (data.type === "ACCESS_EVENT") {
+                // Worker-initiated admin actions (manual override / force checkout) must
+                // instantly resync the UI, even if a QR flow was mid-flight.
+                if (typeof data.reason === "string" && (data.reason.includes("Manual Override") || data.reason.includes("Force Checkout"))) {
+                    setQrToken("");
+                    setTimeLeft(0);
+                    localStorage.removeItem(STORAGE_KEY);
+                    void fetchStatus();
+                }
+
                 if (data.access_granted) {
                     setAccessGranted(true);
                     setScanMessage(data.action_type === "ENTRY" ? "Welcome in!" : "Goodbye!");
@@ -222,6 +259,15 @@ export default function Dashboard() {
 
     return (
         <div className="flex flex-col gap-6 max-w-4xl mx-auto">
+            {/* STRIPE CHECKOUT SUCCESS BANNER */}
+            {showPaymentSuccess && (
+                <div className="bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-800 p-4 rounded-2xl flex items-center gap-3 transition-colors animate-in fade-in duration-300">
+                    <p className="text-emerald-800 dark:text-emerald-300 text-sm font-bold">
+                        🎉 Subscription activated! It may take a few seconds to appear below.
+                    </p>
+                </div>
+            )}
+
             {/* WELCOME BANNER */}
             <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800 flex justify-between items-center transition-colors">
                 <div>

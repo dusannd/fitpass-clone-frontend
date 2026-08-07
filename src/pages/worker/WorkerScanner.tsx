@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Html5Qrcode } from "html5-qrcode";
 import axios from "axios";
 import { api } from "../../api/axios";
@@ -12,9 +13,20 @@ interface ScanResponse {
 }
 
 export default function WorkerScanner() {
+    // --- KIOSK MODE: locked ENTRY/EXIT + location via URL (?mode=&loc=) ---
+    const [searchParams] = useSearchParams();
+    const kioskModeParam = searchParams.get("mode");
+    const kioskLocParam = searchParams.get("loc");
+    const isKioskMode = kioskModeParam !== null && kioskLocParam !== null;
+
     // --- STATE MANAGEMENT ---
-    const [scanMode, setScanMode] = useState<"ENTRY" | "EXIT">("ENTRY");
-    const [locationId, setLocationId] = useState<number>(3);
+    const [scanMode, setScanMode] = useState<"ENTRY" | "EXIT">(() =>
+        kioskModeParam === "ENTRY" || kioskModeParam === "EXIT" ? kioskModeParam : "ENTRY"
+    );
+    const [locationId, setLocationId] = useState<number>(() => {
+        const parsed = kioskLocParam ? parseInt(kioskLocParam, 10) : NaN;
+        return !isNaN(parsed) ? parsed : 3;
+    });
     const [isScanning, setIsScanning] = useState<boolean>(true);
 
     // UI State for scan result overlay (Green/Red screen)
@@ -148,7 +160,8 @@ export default function WorkerScanner() {
                         <select
                             value={scanMode}
                             onChange={(e) => setScanMode(e.target.value as "ENTRY" | "EXIT")}
-                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 p-3 rounded-xl font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all cursor-pointer"
+                            disabled={isKioskMode}
+                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 p-3 rounded-xl font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                         >
                             <option value="ENTRY">Check In (Entry)</option>
                             <option value="EXIT">Check Out (Exit)</option>
@@ -161,7 +174,8 @@ export default function WorkerScanner() {
                             type="number"
                             value={locationId}
                             onChange={(e) => setLocationId(parseInt(e.target.value) || 1)}
-                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 p-3 rounded-xl font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-center transition-all"
+                            disabled={isKioskMode}
+                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 p-3 rounded-xl font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-center transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                         />
                     </div>
                 </div>

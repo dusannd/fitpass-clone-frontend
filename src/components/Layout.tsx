@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/axios";
 
 
@@ -28,9 +29,25 @@ export interface User {
 export default function Layout() {
     const navigate = useNavigate();
     const location = useLocation();
+    const queryClient = useQueryClient();
 
-    const [user, setUser] = useState<User | null>(null);
-    const [loading, setLoading] = useState(true);
+    // --- USER PROFILE (React Query) ---
+    // queryKey ['userProfile'] is the shared cache key other pages (e.g. Dashboard,
+    // after a successful Stripe checkout) invalidate to force a refetch of the
+    // user's subscription status without a full page reload.
+    const {
+        data: user,
+        isLoading: loading,
+        isError: userFetchFailed,
+    } = useQuery<User>({
+        queryKey: ["userProfile"],
+        queryFn: async () => {
+            const res = await api.get<User>("/users/me");
+            return res.data;
+        },
+        retry: false,
+    });
+
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Za mobilni meni
 
     // --- DARK MODE LOGIKA ---
@@ -53,31 +70,38 @@ export default function Layout() {
     const toggleTheme = () => setIsDark(!isDark);
     // ------------------------
 
+    // If the session cookie is missing/expired, /users/me fails — bounce to login.
+    // (The axios 401 interceptor also handles this globally, but we cover the
+    // non-401 error case here too, e.g. network failure.)
     useEffect(() => {
-        const fetchUser = async () => {
-            try {
-                const res = await api.get("/users/me");
-                setUser(res.data);
-            } catch (err) {
-                console.error("Failed to fetch user, redirecting to login.");
-                localStorage.removeItem("token");
-                navigate("/login");
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchUser();
-    }, [navigate]);
+        if (userFetchFailed) {
+            console.error("Failed to fetch user, redirecting to login.");
+            navigate("/login");
+        }
+    }, [userFetchFailed, navigate]);
 
-    const handleLogout = () => {
-        localStorage.removeItem("token");
-        navigate("/login");
+    const handleLogout = async () => {
+        try {
+            await api.post("/users/logout");
+        } catch (err) {
+            console.error("Logout request failed, clearing local session anyway.", err);
+        } finally {
+            // Drop the cached profile so a future login doesn't briefly show stale data
+            queryClient.removeQueries({ queryKey: ["userProfile"] });
+            navigate("/login");
+        }
     };
 
 
-    useEffect(() => {
+    // Close the mobile menu on navigation. Adjusted directly during render
+    // (React's documented pattern for "reset state when a prop changes")
+    // instead of inside an effect, so the reset takes effect before paint
+    // rather than causing an extra render pass.
+    const [prevPathname, setPrevPathname] = useState(location.pathname);
+    if (location.pathname !== prevPathname) {
+        setPrevPathname(location.pathname);
         setIsMobileMenuOpen(false);
-    }, [location.pathname]);
+    }
 
     if (loading) {
         return (
@@ -207,7 +231,7 @@ export default function Layout() {
 
                 <div className="p-4 border-t border-gray-200 dark:border-slate-800">
                     <button
-                        onClick={handleLogout}
+                        onClick={() => void handleLogout()}
                         className="w-full text-left px-4 py-2 text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-xl transition-colors"
                     >
                         Log Out

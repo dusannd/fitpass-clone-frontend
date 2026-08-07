@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useOutletContext, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import { api } from "../../api/axios";
 import type { User } from "../../components/Layout";
@@ -16,10 +16,25 @@ interface Plan {
 export default function Subscriptions() {
     // Uzimamo 'user' iz Layout-a kako bismo proverili da li već ima aktivnu pretplatu
     const user = useOutletContext<User>();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
 
     const [plans, setPlans] = useState<Plan[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [loadingPlanId, setLoadingPlanId] = useState<number | null>(null);
+
+    // Stripe redirected the user back here after they cancelled checkout.
+    // Read it once via lazy initializer (rather than setting state inside an
+    // effect) so the banner survives the URL cleanup below without an extra render.
+    const [wasCancelled] = useState(() => searchParams.get("payment") === "cancelled");
+
+    useEffect(() => {
+        if (wasCancelled) {
+            navigate("/subscriptions", { replace: true });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // Proveravamo da li trenutno ima aktivnu pretplatu
     const now = new Date();
@@ -45,8 +60,11 @@ export default function Subscriptions() {
     }, []);
 
     const handleBuy = async (planId: number) => {
+        setLoadingPlanId(planId);
         try {
             const response = await api.post(`/payments/checkout-session?plan_id=${planId}`);
+            // Navigating away to Stripe — intentionally leave loadingPlanId set so the
+            // button stays disabled/"Redirecting..." until the page unloads.
             window.location.assign(response.data.checkout_url);
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
@@ -54,6 +72,7 @@ export default function Subscriptions() {
             } else {
                 alert("An unexpected error occurred");
             }
+            setLoadingPlanId(null);
         }
     };
 
@@ -70,6 +89,16 @@ export default function Subscriptions() {
                     Choose the best plan for your fitness journey.
                 </p>
             </div>
+
+            {/* STRIPE CHECKOUT CANCELLED WARNING */}
+            {wasCancelled && (
+                <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 p-4 rounded-2xl mb-8 flex items-center gap-3 transition-colors">
+                    <span className="text-2xl">⚠️</span>
+                    <p className="text-amber-800 dark:text-amber-300 text-sm font-bold">
+                        Checkout was cancelled. No charge was made — feel free to try again whenever you're ready.
+                    </p>
+                </div>
+            )}
 
             {/* AKO VEĆ IMA PRETPLATU, PRIKAZUJEMO BANER */}
             {activeSub && (
@@ -121,14 +150,18 @@ export default function Subscriptions() {
                             <div className="mt-auto pt-4 border-t border-gray-100 dark:border-slate-800">
                                 <button
                                     onClick={() => void handleBuy(plan.id)}
-                                    disabled={!!activeSub} // ZAKLJUČAJ DUGME AKO IMA PRETPLATU
+                                    disabled={!!activeSub || loadingPlanId !== null} // ZAKLJUČAJ DUGME AKO IMA PRETPLATU ILI SE UČITAVA
                                     className={`w-full font-bold py-3 px-4 rounded-xl transition-all shadow-sm ${
-                                        activeSub
+                                        activeSub || loadingPlanId !== null
                                             ? "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed"
                                             : "bg-blue-600 hover:bg-blue-700 text-white hover:shadow-md"
                                     }`}
                                 >
-                                    {activeSub ? "Already Subscribed" : "Buy Now via Stripe"}
+                                    {activeSub
+                                        ? "Already Subscribed"
+                                        : loadingPlanId === plan.id
+                                            ? "Redirecting..."
+                                            : "Buy Now via Stripe"}
                                 </button>
                             </div>
                         </div>
