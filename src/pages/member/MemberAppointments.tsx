@@ -38,6 +38,7 @@ export default function MemberAppointments() {
     const [startTime, setStartTime] = useState("10:00");
     const [endTime, setEndTime] = useState("11:00");
 
+    // Jedna funkcija za povlačenje podataka — koristi je i inicijalni load i refresh posle zakazivanja
     const refreshData = useCallback(async () => {
         try {
             const [apptsRes, trainersRes] = await Promise.all([
@@ -56,36 +57,11 @@ export default function MemberAppointments() {
     }, []);
 
     useEffect(() => {
-        let isMounted = true;
-
-        const fetchInitialData = async () => {
-            try {
-                const [apptsRes, trainersRes] = await Promise.all([
-                    api.get("/coaching/appointments/client"),
-                    api.get("/coaching/my-trainers")
-                ]);
-
-                if (isMounted) {
-                    const fetchedTrainers = trainersRes.data as MyTrainer[];
-                    const acceptedTrainers = fetchedTrainers.filter((t: MyTrainer) => t.status === "ACCEPTED");
-
-                    setAppointments(apptsRes.data);
-                    setMyTrainers(acceptedTrainers);
-                }
-            } catch {
-                if (isMounted) {
-                    setError("Failed to load appointments.");
-                }
-            } finally {
-                if (isMounted) {
-                    setLoading(false);
-                }
-            }
-        };
-
-        void fetchInitialData();
-        return () => { isMounted = false; };
-    }, []);
+        // Standard fetch-on-mount: setLoading only runs after the async call settles, not
+        // synchronously in the effect body.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        void refreshData().finally(() => setLoading(false));
+    }, [refreshData]);
 
     const handleSchedule = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -121,32 +97,40 @@ export default function MemberAppointments() {
     // Dobijamo današnji datum u formatu "YYYY-MM-DD" da blokiramo biranje jučerašnjeg dana u HTML-u
     const todayStr = new Date().toISOString().split("T")[0];
 
-    if (loading) return <div className="p-6">Loading...</div>;
+    if (loading) return <div className="p-6 text-gray-500 dark:text-gray-400 font-bold">Loading...</div>;
 
     return (
         <div className="flex flex-col lg:flex-row gap-8 max-w-7xl mx-auto">
             {/* LEFT: BOOKING FORM */}
             <div className="w-full lg:w-1/3">
-                <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 sticky top-6">
-                    <h2 className="text-xl font-bold text-gray-800 mb-2">Book a Session</h2>
-                    <p className="text-sm text-gray-500 mb-6">Select a date and time. Sessions cannot exceed 3 hours.</p>
+                <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800 sticky top-6 transition-colors duration-200">
+                    <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-2">Book a Session</h2>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Select a date and time. Sessions cannot exceed 3 hours.</p>
 
-                    {successMsg && <div className="bg-green-100 text-green-700 p-3 rounded mb-4 text-sm font-bold">{successMsg}</div>}
-                    {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm font-bold">{error}</div>}
+                    {successMsg && (
+                        <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 p-3 rounded-xl mb-4 text-sm font-bold border border-emerald-200 dark:border-emerald-800 transition-colors">
+                            ✅ {successMsg}
+                        </div>
+                    )}
+                    {error && (
+                        <div className="bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 p-3 rounded-xl mb-4 text-sm font-bold border border-rose-200 dark:border-rose-800 transition-colors">
+                            ❌ {error}
+                        </div>
+                    )}
 
                     {myTrainers.length === 0 ? (
-                        <div className="text-sm text-orange-600 bg-orange-50 p-3 rounded">
-                            You don't have an active trainer yet. Go to the Coaching tab to request one!
+                        <div className="text-sm text-amber-800 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 p-4 rounded-xl border border-amber-200 dark:border-amber-800 transition-colors">
+                            You don't have an active trainer yet. Go to the Find Trainer tab to request one!
                         </div>
                     ) : (
                         <form onSubmit={(e) => void handleSchedule(e)} className="flex flex-col gap-4">
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Select Trainer</label>
+                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Select Trainer</label>
                                 <select
                                     required
                                     value={selectedTrainer}
                                     onChange={(e) => setSelectedTrainer(e.target.value)}
-                                    className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-blue-500 bg-white"
+                                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                 >
                                     <option value="">-- Choose --</option>
                                     {myTrainers.map((t) => (
@@ -158,41 +142,44 @@ export default function MemberAppointments() {
                             </div>
 
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">Date</label>
+                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Date</label>
                                 <input
                                     type="date"
                                     required
                                     min={todayStr} // Zabrana biranja u prošlosti direkt u kalendaru
                                     value={sessionDate}
                                     onChange={(e) => setSessionDate(e.target.value)}
-                                    className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-blue-500 bg-white"
+                                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                 />
                             </div>
 
                             <div className="flex gap-4">
                                 <div className="w-1/2">
-                                    <label className="block text-sm font-bold text-gray-700 mb-1">Start Time</label>
+                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Start Time</label>
                                     <input
                                         type="time"
                                         required
                                         value={startTime}
                                         onChange={(e) => setStartTime(e.target.value)}
-                                        className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-blue-500 bg-white"
+                                        className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                     />
                                 </div>
                                 <div className="w-1/2">
-                                    <label className="block text-sm font-bold text-gray-700 mb-1">End Time</label>
+                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">End Time</label>
                                     <input
                                         type="time"
                                         required
                                         value={endTime}
                                         onChange={(e) => setEndTime(e.target.value)}
-                                        className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-blue-500 bg-white"
+                                        className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                     />
                                 </div>
                             </div>
 
-                            <button type="submit" className="w-full bg-gray-900 text-white font-bold py-3 rounded hover:bg-black transition mt-4">
+                            <button
+                                type="submit"
+                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-3.5 rounded-xl transition-all shadow-sm hover:shadow-md mt-2"
+                            >
                                 Confirm Booking
                             </button>
                         </form>
@@ -202,42 +189,45 @@ export default function MemberAppointments() {
 
             {/* RIGHT: MY APPOINTMENTS */}
             <div className="w-full lg:w-2/3">
-                <h2 className="text-2xl font-bold text-gray-800 mb-6">My Schedule</h2>
+                <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">My Schedule</h2>
                 {appointments.length === 0 ? (
-                    <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 text-center text-gray-500">
+                    <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 text-center text-gray-500 dark:text-gray-400 transition-colors">
                         You have no upcoming appointments.
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {appointments.map((appt) => (
-                            <div key={appt.id} className="bg-white p-5 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-between">
+                            <div
+                                key={appt.id}
+                                className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 flex flex-col justify-between transition-colors duration-200"
+                            >
                                 <div>
                                     <div className="flex justify-between items-start mb-4">
                                         <div className="flex items-center gap-2">
-                                            <div className="h-8 w-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold">
+                                            <div className="h-8 w-8 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-full flex items-center justify-center font-black">
                                                 {appt.trainer?.first_name.charAt(0)}
                                             </div>
-                                            <h3 className="font-bold text-lg text-gray-800">
+                                            <h3 className="font-bold text-lg text-gray-800 dark:text-white">
                                                 {appt.trainer?.first_name} {appt.trainer?.last_name}
                                             </h3>
                                         </div>
-                                        <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${
-                                            appt.status === "SCHEDULED" ? "bg-blue-100 text-blue-700" :
-                                                appt.status === "COMPLETED" ? "bg-green-100 text-green-700" :
-                                                    "bg-red-100 text-red-700"
+                                        <span className={`px-2.5 py-1 rounded-full text-xs font-black uppercase ${
+                                            appt.status === "SCHEDULED" ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400" :
+                                                appt.status === "COMPLETED" ? "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400" :
+                                                    "bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400"
                                         }`}>
                                             {appt.status}
                                         </span>
                                     </div>
-                                    <div className="bg-gray-50 p-3 rounded border border-gray-100 text-sm text-gray-700 flex flex-col gap-1">
-                                        <p><strong>Date:</strong> {new Date(appt.start_time).toLocaleDateString()}</p>
-                                        <p><strong>Time:</strong> {new Date(appt.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {new Date(appt.end_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                                    <div className="bg-gray-50 dark:bg-slate-800/60 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50 text-sm text-gray-700 dark:text-gray-300 flex flex-col gap-1">
+                                        <p><strong className="text-gray-900 dark:text-white">Date:</strong> {new Date(appt.start_time).toLocaleDateString()}</p>
+                                        <p><strong className="text-gray-900 dark:text-white">Time:</strong> {new Date(appt.start_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} - {new Date(appt.end_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
                                     </div>
                                 </div>
 
                                 {appt.notes && (
-                                    <div className="mt-4 bg-yellow-50 p-3 rounded border border-yellow-200 text-sm text-gray-700">
-                                        <span className="font-bold block mb-1">Trainer's Note:</span>
+                                    <div className="mt-4 bg-amber-50 dark:bg-amber-900/20 p-3 rounded-xl border border-amber-200 dark:border-amber-800/50 text-sm text-gray-700 dark:text-gray-300">
+                                        <span className="font-bold block mb-1 text-gray-900 dark:text-white">Trainer's Note:</span>
                                         "{appt.notes}"
                                     </div>
                                 )}
