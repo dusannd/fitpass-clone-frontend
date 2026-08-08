@@ -4,13 +4,91 @@ import axios from "axios";
 import { api } from "../../api/axios";
 import type { User } from "../../components/Layout";
 
+// --- TYPES ---
+// Matches the nested JSON from GET /subscriptions/plans (locations + rule eagerly loaded)
+interface GymLocation {
+    id: number;
+    name: string;
+    address: string | null;
+    is_24_7: boolean;
+}
+
+interface PlanRule {
+    id: number;
+    allowed_time_start: string | null; // "HH:MM:SS"
+    allowed_time_end: string | null;
+    allowed_days: string | null; // e.g. "0,1,2,3,4" (0=Monday, 6=Sunday)
+}
+
 interface Plan {
     id: number;
     name: string;
-    description: string;
+    description: string | null;
     price: number;
     duration_days: number;
     is_active: boolean;
+    locations: GymLocation[];
+    rule: PlanRule | null;
+}
+
+// --- HELPERS ---
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// "0,1,2,3,4" -> "Mon-Fri" style summary
+function formatAllowedDays(allowedDays: string): string {
+    const days = allowedDays
+        .split(",")
+        .map((d) => parseInt(d.trim(), 10))
+        .filter((d) => !isNaN(d) && d >= 0 && d <= 6);
+
+    if (days.length === 7) return "Every day";
+    return days.map((d) => DAY_LABELS[d]).join(", ");
+}
+
+// "09:00:00" -> "09:00"
+function formatTime(t: string): string {
+    return t.slice(0, 5);
+}
+
+// --- DECOY PRICING THEME ---
+// Parses the plan name and returns the Tailwind classes for its tier.
+// Standard/Basic = the plain "looks basic" option. Gold/Pro = the bestseller
+// we push people towards. VIP/Premium = the expensive anchor that makes Gold
+// look reasonable.
+function getPlanTheme(name: string) {
+    const lower = name.toLowerCase();
+
+    if (lower.includes("gold") || lower.includes("pro")) {
+        return {
+            cardClass: "bg-gradient-to-br from-amber-400 to-orange-500 border-transparent text-white scale-105 shadow-2xl shadow-orange-500/30 z-10",
+            priceClass: "text-white",
+            subTextClass: "text-white/80",
+            checkColor: "text-white",
+            buttonClass: "bg-white text-orange-600 hover:bg-orange-50",
+            isPopular: true,
+        };
+    }
+
+    if (lower.includes("vip") || lower.includes("premium")) {
+        return {
+            cardClass: "bg-gray-900 border border-purple-500 text-white shadow-xl shadow-purple-500/50",
+            priceClass: "text-white",
+            subTextClass: "text-gray-400",
+            checkColor: "text-purple-400",
+            buttonClass: "bg-purple-600 hover:bg-purple-500 text-white",
+            isPopular: false,
+        };
+    }
+
+    // Default: Standard / Basic (or anything else)
+    return {
+        cardClass: "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white",
+        priceClass: "text-slate-900 dark:text-white",
+        subTextClass: "text-gray-500 dark:text-gray-400",
+        checkColor: "text-emerald-500",
+        buttonClass: "bg-blue-600 hover:bg-blue-700 text-white",
+        isPopular: false,
+    };
 }
 
 export default function Subscriptions() {
@@ -42,13 +120,12 @@ export default function Subscriptions() {
         sub => sub.is_active === 1 && new Date(sub.end_date) > now
     );
 
+    // --- FETCH PLANS ---
     useEffect(() => {
         const fetchPlans = async () => {
             try {
-                const response = await api.get("/subscriptions/plans");
-                // Prikazujemo samo aktivne planove
-                const activePlans = response.data.filter((p: Plan) => p.is_active);
-                setPlans(activePlans);
+                const response = await api.get<Plan[]>("/subscriptions/plans");
+                setPlans(response.data);
             } catch {
                 setError("Failed to load subscription plans.");
             } finally {
@@ -59,6 +136,7 @@ export default function Subscriptions() {
         void fetchPlans();
     }, []);
 
+    // --- BUY NOW ---
     const handleBuy = async (planId: number) => {
         setLoadingPlanId(planId);
         try {
@@ -81,12 +159,12 @@ export default function Subscriptions() {
 
     return (
         <div className="max-w-6xl mx-auto">
-            <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-800 dark:text-white transition-colors duration-200">
-                    Gym Subscriptions
+            <div className="mb-8 text-center">
+                <h1 className="text-3xl sm:text-4xl font-black text-gray-800 dark:text-white transition-colors duration-200">
+                    Choose Your Plan
                 </h1>
                 <p className="text-gray-600 dark:text-gray-400 mt-2 transition-colors duration-200">
-                    Choose the best plan for your fitness journey.
+                    Simple pricing. Cancel anytime. Pick the plan that fits your grind.
                 </p>
             </div>
 
@@ -122,50 +200,88 @@ export default function Subscriptions() {
                     No active subscription plans found. The admin needs to create some first.
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {plans.map((plan) => (
-                        <div
-                            key={plan.id}
-                            className={`bg-white dark:bg-slate-900 rounded-2xl shadow-sm border p-6 flex flex-col transition-all duration-200 ${
-                                activeSub
-                                    ? "border-gray-200 dark:border-slate-800 opacity-60"
-                                    : "border-gray-200 dark:border-slate-800 hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700"
-                            }`}
-                        >
-                            <h2 className="text-2xl font-black text-gray-800 dark:text-white">{plan.name}</h2>
-                            <p className="text-gray-500 dark:text-gray-400 mt-2 text-sm h-12 overflow-hidden">
-                                {plan.description || "No description provided."}
-                            </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start pt-4">
+                    {plans.map((plan) => {
+                        const theme = getPlanTheme(plan.name);
 
-                            <div className="my-6">
-                                <span className="text-4xl font-black text-blue-600 dark:text-blue-400">
-                                    {plan.price}
-                                </span>
-                                <span className="text-gray-500 dark:text-gray-400 font-bold ml-1">RSD</span>
-                                <p className="text-sm text-gray-400 dark:text-gray-500 font-medium mt-1">
-                                    Valid for {plan.duration_days} days
+                        // Build the feature list from the plan's real nested data
+                        const features: string[] = [
+                            `Access to ${plan.locations.length} premium location${plan.locations.length === 1 ? "" : "s"}`
+                        ];
+
+                        if (plan.rule) {
+                            const hasHours = plan.rule.allowed_time_start && plan.rule.allowed_time_end;
+                            if (hasHours) {
+                                features.push(`Access hours: ${formatTime(plan.rule.allowed_time_start!)} – ${formatTime(plan.rule.allowed_time_end!)}`);
+                            }
+                            if (plan.rule.allowed_days) {
+                                features.push(`Available: ${formatAllowedDays(plan.rule.allowed_days)}`);
+                            }
+                        } else {
+                            features.push("24/7 Unlimited Access");
+                        }
+
+                        const isDisabled = !!activeSub || loadingPlanId !== null;
+
+                        return (
+                            <div
+                                key={plan.id}
+                                className={`relative rounded-3xl border p-8 flex flex-col transition-all duration-200 ${theme.cardClass} ${
+                                    activeSub ? "opacity-60" : ""
+                                }`}
+                            >
+                                {/* BESTSELLER BADGE */}
+                                {theme.isPopular && (
+                                    <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-xs font-black uppercase tracking-wider px-4 py-1.5 rounded-full shadow-lg whitespace-nowrap">
+                                        🔥 Most Popular
+                                    </div>
+                                )}
+
+                                <h2 className="text-2xl font-black">{plan.name}</h2>
+                                <p className={`mt-2 text-sm h-10 overflow-hidden ${theme.subTextClass}`}>
+                                    {plan.description || "No description provided."}
                                 </p>
-                            </div>
 
-                            <div className="mt-auto pt-4 border-t border-gray-100 dark:border-slate-800">
-                                <button
-                                    onClick={() => void handleBuy(plan.id)}
-                                    disabled={!!activeSub || loadingPlanId !== null} // ZAKLJUČAJ DUGME AKO IMA PRETPLATU ILI SE UČITAVA
-                                    className={`w-full font-bold py-3 px-4 rounded-xl transition-all shadow-sm ${
-                                        activeSub || loadingPlanId !== null
-                                            ? "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed"
-                                            : "bg-blue-600 hover:bg-blue-700 text-white hover:shadow-md"
-                                    }`}
-                                >
-                                    {activeSub
-                                        ? "Already Subscribed"
-                                        : loadingPlanId === plan.id
-                                            ? "Redirecting..."
-                                            : "Buy Now via Stripe"}
-                                </button>
+                                <div className="my-6">
+                                    <span className={`text-4xl font-black ${theme.priceClass}`}>
+                                        {plan.price}
+                                    </span>
+                                    <span className={`font-bold ml-1 ${theme.subTextClass}`}>RSD</span>
+                                    <p className={`text-sm font-medium mt-1 ${theme.subTextClass}`}>
+                                        Valid for {plan.duration_days} days
+                                    </p>
+                                </div>
+
+                                {/* FEATURE LIST */}
+                                <ul className="flex flex-col gap-2 mb-8">
+                                    {features.map((feature) => (
+                                        <li key={feature} className="flex items-start gap-2 text-sm font-medium">
+                                            <span className={theme.checkColor}>✅</span>
+                                            <span>{feature}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+
+                                <div className="mt-auto">
+                                    <button
+                                        onClick={() => void handleBuy(plan.id)}
+                                        disabled={isDisabled}
+                                        className={`w-full font-bold py-3 px-4 rounded-xl transition-all shadow-sm ${
+                                            isDisabled
+                                                ? "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                                                : `${theme.buttonClass} hover:shadow-md`
+                                        }`}
+                                    >
+                                        {activeSub
+                                            ? "Already Subscribed"
+                                            : loadingPlanId === plan.id
+                                                ? "Redirecting..."
+                                                : "Buy Now via Stripe"}
+                                    </button>
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </div>
