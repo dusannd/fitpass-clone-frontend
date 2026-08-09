@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { FormEvent } from "react"
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
 import { api } from "../api/axios";
@@ -11,6 +11,10 @@ const SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY || "";
 
 export default function Login() {
     const navigate = useNavigate();
+
+    // Set by the axios 401 interceptor when it kicks a user out mid-session
+    const [searchParams] = useSearchParams();
+    const sessionExpired = searchParams.get("session") === "expired";
 
     // --- FORM STATE ---
     const [email, setEmail] = useState("");
@@ -145,6 +149,13 @@ export default function Login() {
                     <h2 className="text-3xl font-black text-gray-900 tracking-tight">FitPass Login</h2>
                     <p className="text-sm text-gray-500 mt-2">Welcome back! Please enter your details.</p>
                 </div>
+
+                {/* SESSION EXPIRED NOTICE (401) - hidden once a real error shows up */}
+                {sessionExpired && !error && (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-xl mb-6 text-sm font-medium" role="status">
+                        ⏱️ Your session expired. Please sign in again to continue.
+                    </div>
+                )}
 
                 {/* GLOBAL ERROR MESSAGES */}
                 {error && (

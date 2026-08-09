@@ -15,9 +15,11 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response && error.response.status === 401) {
-            // If the backend says the token is invalid/missing, push user to login
+            // If the backend says the token is invalid/missing, push user to login.
+            // The ?session=expired flag lets Login explain WHY they got kicked out,
+            // instead of silently dropping them on an empty form.
             if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
-                window.location.href = '/login';
+                window.location.href = '/login?session=expired';
             }
         }
         return Promise.reject(error);
