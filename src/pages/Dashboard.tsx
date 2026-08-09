@@ -4,6 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import axios from "axios";
 import { api } from "../api/axios";
+import Avatar from "../components/Avatar";
+import { parseGoals, getPrimaryAccent } from "../utils/profile";
 import type { User } from "../components/Layout";
 
 const WS_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api').replace(/^http/, 'ws');
@@ -33,6 +35,11 @@ export default function Dashboard() {
     const isMember = user.roles.some(r => r.name === "member");
     const isWorker = user.roles.some(r => r.name === "worker");
     const isTrainer = user.roles.some(r => r.name === "trainer");
+
+    // --- PROFILE SUMMARY ---
+    const myGoals = parseGoals(user.profile?.fitness_goals);
+    const hasProfileInfo = Boolean(user.profile?.bio || myGoals.length > 0);
+    const accent = getPrimaryAccent(user.roles.map(r => r.name));
 
     // --- STRIPE CHECKOUT SUCCESS HANDLING ---
     // Read the flag from the URL during the initial render (lazy initializer)
@@ -275,6 +282,56 @@ export default function Dashboard() {
                         Welcome back, {user.first_name}! 👋
                     </h1>
                     <p className="text-gray-500 dark:text-slate-400 text-sm">Ready to crush your goals today?</p>
+                </div>
+            </div>
+
+            {/* MY PROFILE - short summary only, editing happens on /profile */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800 transition-colors">
+                <div className="flex items-start gap-4">
+                    {/* Same role colored ring as on the profile page */}
+                    <div className={`rounded-full ring-2 ${accent.ring} shrink-0`}>
+                        <Avatar profile={user.profile} firstName={user.first_name} size="md" />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-4 mb-2">
+                            <h2 className="text-lg font-bold text-gray-800 dark:text-white">My Profile</h2>
+                            <Link
+                                to="/profile"
+                                className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors shrink-0"
+                            >
+                                {hasProfileInfo ? "Edit" : "Complete Profile"}
+                            </Link>
+                        </div>
+
+                        {hasProfileInfo ? (
+                            <>
+                                {user.profile?.bio && (
+                                    <p className="text-sm text-gray-600 dark:text-slate-400 line-clamp-2 mb-3">
+                                        {user.profile.bio}
+                                    </p>
+                                )}
+                                {myGoals.length > 0 && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {myGoals.map((goal, i) => (
+                                            <span
+                                                key={`${goal}-${i}`}
+                                                className="text-xs font-bold px-3 py-1 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800"
+                                            >
+                                                {goal}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <p className="text-sm text-gray-500 dark:text-slate-400">
+                                {isTrainer
+                                    ? "Add a bio and your specialties so members can find you."
+                                    : "Add your goals and a short bio so trainers know who you are."}
+                            </p>
+                        )}
+                    </div>
                 </div>
             </div>
 

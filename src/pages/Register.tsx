@@ -19,6 +19,10 @@ export default function Register() {
     const [password, setPassword] = useState("");
     const [extraInfo, setExtraInfo] = useState(""); // HONEYPOT FIELD
 
+    // --- OPTIONAL PROFILE FIELDS ---
+    const [bio, setBio] = useState("");
+    const [fitnessGoals, setFitnessGoals] = useState("");
+
     // --- UI STATE ---
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState("");
@@ -97,6 +101,13 @@ export default function Register() {
                 recaptchaRef.current.reset();
             }
 
+            // The profile is optional - if they filled in nothing, we don't send it at all
+            const trimmedBio = bio.trim();
+            const trimmedGoals = fitnessGoals.trim();
+            const profile = (trimmedBio || trimmedGoals)
+                ? { bio: trimmedBio || null, fitness_goals: trimmedGoals || null }
+                : null;
+
             // Send to our bulletproof backend!
             await api.post("/users/", {
                 email,
@@ -104,7 +115,8 @@ export default function Register() {
                 first_name: firstName,
                 last_name: lastName,
                 extra_info: extraInfo, // Honeypot
-                recaptcha_token: recaptchaToken // reCAPTCHA
+                recaptcha_token: recaptchaToken, // reCAPTCHA
+                profile // Bio + goals (can be null)
             });
 
             setSuccess(true);
@@ -285,6 +297,54 @@ export default function Register() {
                                 </p>
                             </div>
                         )}
+                    </div>
+
+                    {/* OPTIONAL PROFILE (bio + goals) */}
+                    <div className="border-t border-gray-100 pt-5 mt-1">
+                        <div className="flex items-baseline justify-between mb-1">
+                            <h3 className="text-sm font-bold text-gray-700">Tell us about yourself</h3>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                                Optional
+                            </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mb-4">
+                            Helps trainers understand your goals. You can always add this later.
+                        </p>
+
+                        <div className="flex flex-col gap-4">
+                            <div>
+                                <label htmlFor="fitnessGoals" className="block text-sm font-bold text-gray-700 mb-1.5">
+                                    Fitness Goals
+                                </label>
+                                <input
+                                    id="fitnessGoals"
+                                    type="text"
+                                    value={fitnessGoals}
+                                    maxLength={255}
+                                    onChange={(e) => setFitnessGoals(e.target.value)}
+                                    disabled={isLoading}
+                                    placeholder="Lose weight, Build muscle"
+                                    className="w-full border border-gray-300 bg-gray-50 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                                />
+                                <p className="text-[11px] text-gray-400 mt-1">Separate with commas</p>
+                            </div>
+
+                            <div>
+                                <label htmlFor="bio" className="block text-sm font-bold text-gray-700 mb-1.5">
+                                    Short Bio
+                                </label>
+                                <textarea
+                                    id="bio"
+                                    rows={3}
+                                    value={bio}
+                                    maxLength={2000}
+                                    onChange={(e) => setBio(e.target.value)}
+                                    disabled={isLoading}
+                                    placeholder="Complete beginner, training 3x a week after work..."
+                                    className="w-full border border-gray-300 bg-gray-50 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all resize-y"
+                                />
+                            </div>
+                        </div>
                     </div>
 
                     {/* INVISIBLE RECAPTCHA */}

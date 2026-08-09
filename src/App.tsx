@@ -3,6 +3,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import VerifyEmail from "./pages/VerifyEmail";
 import Dashboard from "./pages/Dashboard";
+import Profile from "./pages/Profile";
 import Layout from "./components/Layout";
 import Subscriptions from "./pages/member/Subscriptions";
 import ManagePlans from "./pages/admin/ManagePlans.tsx";
@@ -30,6 +31,7 @@ export default function App() {
             <Route element={<Layout />}>
                 {/* All routes inside here will have the sidebar menu */}
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/profile" element={<Profile />} />
 
                 {/* MEMBER ROUTES */}
                 <Route path="/subscriptions" element={<Subscriptions />} />

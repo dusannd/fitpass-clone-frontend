@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { api } from "../../api/axios.ts";
+import Avatar from "../../components/Avatar";
+import { parseGoals } from "../../utils/profile";
+import type { UserProfile } from "../../components/Layout";
 
 interface Trainer {
     id: number;
     first_name: string;
     last_name: string;
     email: string;
+    profile: UserProfile | null;
 }
 
 interface MyTrainerLink {
@@ -122,33 +126,69 @@ export default function MemberCoaching() {
                         const isAccepted = acceptedIds.includes(trainer.id);
                         const isCurrentlyLoading = loadingId === trainer.id;
 
+                        // For trainers we show the same fitness_goals field as "Specialties"
+                        const specialties = parseGoals(trainer.profile?.fitness_goals);
+
                         // Ako te je trener već prihvatio, karta postaje zelena!
                         return (
                             <div
                                 key={trainer.id}
-                                className={`bg-white dark:bg-slate-900 rounded-2xl shadow-sm border p-6 flex flex-col items-center text-center transition-all duration-200 ${
+                                className={`relative bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl rounded-2xl p-6 flex flex-col items-center text-center ring-1 transition-all duration-200 ${
                                     isAccepted
-                                        ? "border-emerald-300 dark:border-emerald-700"
-                                        : "border-gray-200 dark:border-slate-800 hover:shadow-lg hover:-translate-y-0.5"
+                                        ? "ring-emerald-300 dark:ring-emerald-700 shadow-lg shadow-emerald-500/10"
+                                        : "ring-gray-200 dark:ring-slate-800 shadow-md shadow-slate-900/5 hover:shadow-xl hover:shadow-slate-900/10 hover:-translate-y-1 hover:ring-blue-300 dark:hover:ring-blue-800"
                                 }`}
                             >
-                                <div className={`h-20 w-20 rounded-full flex items-center justify-center font-black text-3xl mb-4 uppercase ${
-                                    isAccepted
-                                        ? "bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400"
-                                        : "bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400"
+                                {/* Corner badge when the trainer is already yours */}
+                                {isAccepted && (
+                                    <span className="absolute top-4 right-4 text-[10px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full">
+                                        Your Trainer
+                                    </span>
+                                )}
+
+                                <div className={`rounded-full mb-4 ring-4 ${
+                                    isAccepted ? "ring-emerald-200 dark:ring-emerald-800" : "ring-blue-100 dark:ring-blue-900/50"
                                 }`}>
-                                    {trainer.first_name?.charAt(0) || "T"}
+                                    <Avatar profile={trainer.profile} firstName={trainer.first_name} size="lg" />
                                 </div>
 
                                 <h2 className="text-xl font-bold text-gray-800 dark:text-white">
                                     {trainer.first_name} {trainer.last_name}
                                 </h2>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">{trainer.email}</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">{trainer.email}</p>
+
+                                {/* SPECIALTIES */}
+                                {specialties.length > 0 && (
+                                    <div className="flex flex-wrap justify-center gap-1.5 mt-4">
+                                        {specialties.map((item, i) => (
+                                            <span
+                                                key={`${item}-${i}`}
+                                                className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800"
+                                            >
+                                                {item}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* SHORT BIO SNIPPET */}
+                                {trainer.profile?.bio ? (
+                                    <p className="text-sm text-gray-600 dark:text-gray-400 mt-4 line-clamp-3 leading-relaxed">
+                                        {trainer.profile.bio}
+                                    </p>
+                                ) : (
+                                    <p className="text-sm text-gray-400 dark:text-gray-600 italic mt-4">
+                                        No bio yet.
+                                    </p>
+                                )}
+
+                                {/* mt-auto pushes the line and the button to the bottom, so all cards are the same height */}
+                                <div className="w-full h-px bg-gray-200 dark:bg-slate-800 mt-auto mb-5"></div>
 
                                 <button
                                     disabled={isPending || isAccepted || isCurrentlyLoading}
                                     onClick={() => void handleSendRequest(trainer.id, `${trainer.first_name}`)}
-                                    className={`w-full mt-auto font-black py-3 px-4 rounded-xl transition-all shadow-sm ${
+                                    className={`w-full font-black py-3 px-4 rounded-xl transition-all shadow-sm ${
                                         isAccepted
                                             ? "bg-emerald-500 text-white cursor-default" // Zeleno jer je tvoj aktuelni trener
                                             : isPending
