@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { api } from "../../api/axios";
 import { WEIGHT_STEP_OPTIONS, DEFAULT_WEIGHT_STEP } from "../../utils/workout";
@@ -115,7 +116,16 @@ const isPristine = (draft: PlanDraft): boolean => {
     return !only.name.trim() && !only.instructions.trim() && only.recommended_weight_kg === null;
 };
 
+// What "📋 Assign Plan" on the My Clients page hands over through the router.
+interface AssignHandoff {
+    assignToClientId?: number;
+    assignToClientName?: string;
+}
+
 export default function TrainerPlans() {
+    const location = useLocation();
+    const navigate = useNavigate();
+
     const [plans, setPlans] = useState<WorkoutPlan[]>([]);
     const [clients, setClients] = useState<ClientInfo[]>([]);
     const [loading, setLoading] = useState(true);
@@ -125,7 +135,24 @@ export default function TrainerPlans() {
     // state so we only read localStorage once, on mount.
     const [form, setForm] = useState(() => {
         const saved = loadDraft();
-        return { draft: saved ?? emptyDraft(), restoredFromDraft: saved !== null };
+        const base = saved ?? emptyDraft();
+
+        // Arriving from "Assign Plan" on My Clients: the trainer has just said who this
+        // plan is for, so that beats whatever client the stored draft happened to hold.
+        // Applying it here, in the same single read, avoids a second render and any
+        // setState-in-effect.
+        const handoff = (location.state ?? null) as AssignHandoff | null;
+        const draft = handoff?.assignToClientId
+            ? { ...base, client_id: handoff.assignToClientId }
+            : base;
+
+        return {
+            draft,
+            restoredFromDraft: saved !== null,
+            // Only needed until the client list arrives, so the banner can name them
+            // on the very first paint.
+            handoffClientName: handoff?.assignToClientName ?? "",
+        };
     });
     const draft = form.draft;
 
@@ -154,6 +181,14 @@ export default function TrainerPlans() {
         void fetchPlans();
     }, []);
 
+    // The hand-off was consumed by the state initializer above. Drop it from the history
+    // entry so refreshing the page does not re-apply a client the trainer has since
+    // changed their mind about.
+    useEffect(() => {
+        if (!location.state) return;
+        navigate(location.pathname, { replace: true, state: null });
+    }, [location.state, location.pathname, navigate]);
+
     // --- DRAFT AUTO-SAVE ---
     // Runs on every edit. Same shape as the theme effect in Layout.tsx: React state is
     // the source of truth, localStorage just follows it.
@@ -167,7 +202,47 @@ export default function TrainerPlans() {
     };
 
     const discardDraft = () => {
-        setForm({ draft: emptyDraft(), restoredFromDraft: false });
+        setForm({ draft: emptyDraft(), restoredFromDraft: false, handoffClientName: "" });
+    };
+
+    /**
+     * Loads an existing plan back into the builder so it can be published again for a
+     * specific client. Nothing is sent yet - the trainer picks the client and hits
+     * Publish, which is the same POST as always, so no new endpoint is involved.
+     */
+    const duplicatePlan = (plan: WorkoutPlan) => {
+        if (!isPristine(draft) && !window.confirm("Replace what you are currently building with a copy of this plan?")) {
+            return;
+        }
+
+        setForm({
+            draft: {
+                name: `${plan.name} (copy)`,
+                description: plan.description ?? "",
+                // Keep the original target: copying a private plan keeps that client,
+                // copying a public one leaves the select on Public until they choose.
+                client_id: plan.client_id,
+                // Rebuild each exercise field by field: the API version carries an id we
+                // must not copy, and nullable columns would land in controlled inputs.
+                exercises: plan.exercises.map((ex) => ({
+                    ...emptyExercise(),
+                    name: ex.name,
+                    sets: ex.sets,
+                    reps: ex.reps,
+                    rest_time_seconds: ex.rest_time_seconds ?? 60,
+                    requires_weight: ex.requires_weight,
+                    recommended_weight_kg: ex.recommended_weight_kg ?? null,
+                    weight_step_kg: ex.weight_step_kg ?? DEFAULT_WEIGHT_STEP,
+                    instructions: ex.instructions ?? "",
+                })),
+            },
+            restoredFromDraft: false,
+            handoffClientName: "",
+        });
+
+        setError("");
+        setMessage("Copied into the builder. Pick who it is for, then publish it.");
+        window.scrollTo({ top: 0, behavior: "smooth" });
     };
 
     const addExercise = () => {
@@ -209,7 +284,7 @@ export default function TrainerPlans() {
             // Only now is the work safe on the server, so this is the ONLY place the
             // draft gets thrown away. A failed publish below keeps everything.
             localStorage.removeItem(DRAFT_KEY);
-            setForm({ draft: emptyDraft(), restoredFromDraft: false });
+            setForm({ draft: emptyDraft(), restoredFromDraft: false, handoffClientName: "" });
 
             setMessage(
                 draft.client_id !== null
@@ -233,6 +308,13 @@ export default function TrainerPlans() {
     // A client who is no longer linked simply drops out and the badge falls back.
     const clientNames = new Map(clients.map((c) => [c.id, `${c.first_name} ${c.last_name}`]));
 
+    // The name for the banner: the live client list first, then whatever My Clients
+    // handed over, so there is never a blank while the request is in flight.
+    const targetClientName =
+        draft.client_id !== null
+            ? clientNames.get(draft.client_id) ?? (form.handoffClientName || "your client")
+            : "";
+
     return (
         <div className="flex flex-col gap-8 max-w-5xl mx-auto h-full">
             {/* CREATE PLAN CARD */}
@@ -252,6 +334,26 @@ export default function TrainerPlans() {
                             className="text-xs font-bold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 hover:bg-amber-200 dark:hover:bg-amber-900/80 px-3 py-2 rounded-lg transition-colors"
                         >
                             Discard draft
+                        </button>
+                    </div>
+                )}
+
+                {/*
+                  Who this plan is being written for, stated loudly. The select below is
+                  still the control, but a trainer who came from My Clients should never
+                  have to go looking for confirmation that it worked.
+                */}
+                {draft.client_id !== null && (
+                    <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 p-4 rounded-xl mb-6 flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
+                            🔒 Building a private plan for {targetClientName} — only they will see it.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => patchDraft({ client_id: null })}
+                            className="text-xs font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/50 hover:bg-emerald-200 dark:hover:bg-emerald-900/80 px-3 py-2 rounded-lg transition-colors"
+                        >
+                            Make it public instead
                         </button>
                     </div>
                 )}
@@ -527,6 +629,15 @@ export default function TrainerPlans() {
                                         ))}
                                     </ul>
                                 </div>
+
+                                {/* Turn any existing plan into a private one without retyping it */}
+                                <button
+                                    type="button"
+                                    onClick={() => duplicatePlan(plan)}
+                                    className="w-full mt-4 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/60 text-xs font-bold py-2.5 rounded-lg transition-colors"
+                                >
+                                    📋 Duplicate for a client
+                                </button>
                             </div>
                         ))}
                     </div>

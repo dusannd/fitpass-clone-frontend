@@ -45,6 +45,46 @@ export interface WorkoutSession {
     exercise_logs: ExerciseLog[];
 }
 
+// One exercise inside a past session, rebuilt from its individual set rows.
+export interface GroupedExercise {
+    key: string;
+    name: string;
+    sets: ExerciseLog[];
+    topWeight: number | null;
+}
+
+/**
+ * The API returns one row per set. Every history screen wants one tile per exercise,
+ * headlined by the heaviest set - which is exactly what counts as the personal record.
+ * Shared by the history list and the session detail modal so the two can never disagree.
+ */
+export const groupLogsByExercise = (logs: ExerciseLog[]): GroupedExercise[] => {
+    const groups = new Map<string, GroupedExercise>();
+
+    logs.forEach((log) => {
+        // exercise_id is nullable (the trainer may have deleted the exercise), so fall
+        // back to the name to avoid merging unrelated rows under a single "null" key.
+        const key = log.exercise_id !== null ? `id-${log.exercise_id}` : `name-${log.exercise?.name ?? "unknown"}`;
+
+        const existing = groups.get(key);
+        if (existing) {
+            existing.sets.push(log);
+            if (log.weight_kg !== null && (existing.topWeight === null || log.weight_kg > existing.topWeight)) {
+                existing.topWeight = log.weight_kg;
+            }
+        } else {
+            groups.set(key, {
+                key,
+                name: log.exercise?.name || "Unknown",
+                sets: [log],
+                topWeight: log.weight_kg,
+            });
+        }
+    });
+
+    return Array.from(groups.values());
+};
+
 // --- 2. WEIGHT STEPS ---
 // Every machine moves in its own increment, and the client should never have to work
 // that out mid set. The trainer picks one of these and the "+" button obeys it.

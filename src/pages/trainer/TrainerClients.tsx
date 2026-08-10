@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { api } from "../../api/axios";
 import Avatar from "../../components/Avatar";
@@ -24,6 +25,7 @@ interface CoachingLink {
 }
 
 export default function TrainerClients() {
+    const navigate = useNavigate();
     const [requests, setRequests] = useState<CoachingLink[]>([]);
     const [activeClients, setActiveClients] = useState<CoachingLink[]>([]);
     const [loading, setLoading] = useState(true);
@@ -250,13 +252,33 @@ export default function TrainerClients() {
                                         </div>
                                     )}
 
-                                    {/* See how they are actually lifting, without having to ask them */}
-                                    <button
-                                        onClick={() => void openProgress(link.client)}
-                                        className="w-full mt-4 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-bold py-2.5 rounded-lg transition-colors"
-                                    >
-                                        📈 View Progress
-                                    </button>
+                                    <div className="flex flex-col sm:flex-row gap-2 mt-4">
+                                        {/* See how they are actually lifting, without having to ask them */}
+                                        <button
+                                            onClick={() => void openProgress(link.client)}
+                                            className="flex-1 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-bold py-2.5 rounded-lg transition-colors"
+                                        >
+                                            📈 View Progress
+                                        </button>
+
+                                        {/*
+                                          The plan builder already accepts a client, but a trainer
+                                          thinking "build something for Marko" starts here, not on
+                                          the plans page. Hand the client over so the form opens
+                                          ready to write a private plan.
+                                        */}
+                                        <button
+                                            onClick={() => navigate("/trainer/plans", {
+                                                state: {
+                                                    assignToClientId: link.client.id,
+                                                    assignToClientName: `${link.client.first_name} ${link.client.last_name}`,
+                                                },
+                                            })}
+                                            className="flex-1 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/60 text-xs font-bold py-2.5 rounded-lg transition-colors"
+                                        >
+                                            📋 Assign Plan
+                                        </button>
+                                    </div>
                                 </div>
                             );
                         })}
