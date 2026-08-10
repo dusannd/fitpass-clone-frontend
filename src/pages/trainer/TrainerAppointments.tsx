@@ -40,10 +40,14 @@ export default function TrainerAppointments() {
 
     const handleUpdateStatus = async (id: number, status: string) => {
         try {
-            await api.put(`/coaching/appointments/${id}`, {
-                status: status,
-                notes: actionNotes[id] || null,
-            });
+            // Only send 'notes' when something was actually typed. Sending null for an
+            // empty box would tell the API to CLEAR whatever feedback is already
+            // stored - and the member sees that text as "Trainer's Note".
+            const note = (actionNotes[id] || "").trim();
+            const payload: Record<string, unknown> = { status };
+            if (note) payload.notes = note;
+
+            await api.put(`/coaching/appointments/${id}`, payload);
             await fetchAppointments();
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
@@ -131,33 +135,53 @@ export default function TrainerAppointments() {
                                 </div>
                             </div>
 
-                            {appt.status === "SCHEDULED" && (
-                                <div className="mt-4 flex flex-col gap-3 pt-4 border-t border-gray-100 dark:border-slate-800">
-                                    <input
-                                        type="text"
-                                        placeholder="Add feedback/notes (optional)..."
-                                        value={actionNotes[appt.id] || ""}
-                                        onChange={(e) =>
-                                            setActionNotes({ ...actionNotes, [appt.id]: e.target.value })
-                                        }
-                                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-2 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                                    />
-                                    <div className="flex gap-2">
-                                        <button
-                                            onClick={() => void handleUpdateStatus(appt.id, "COMPLETED")}
-                                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-xl text-xs transition"
-                                        >
-                                            Complete
-                                        </button>
-                                        <button
-                                            onClick={() => void handleUpdateStatus(appt.id, "CANCELLED")}
-                                            className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2 rounded-xl text-xs transition"
-                                        >
-                                            Cancel
-                                        </button>
+                            {appt.status === "SCHEDULED" && (() => {
+                                // The backend refuses to complete a session that hasn't begun,
+                                // so mirror that here - the trainer shouldn't have to discover
+                                // the rule through an error popup. Cancel stays available:
+                                // cancelling something upcoming is the normal case.
+                                const hasStarted = new Date() >= new Date(appt.start_time);
+
+                                return (
+                                    <div className="mt-4 flex flex-col gap-3 pt-4 border-t border-gray-100 dark:border-slate-800">
+                                        <input
+                                            type="text"
+                                            placeholder="Add feedback/notes (optional)..."
+                                            value={actionNotes[appt.id] || ""}
+                                            onChange={(e) =>
+                                                setActionNotes({ ...actionNotes, [appt.id]: e.target.value })
+                                            }
+                                            className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-2 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                        />
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => void handleUpdateStatus(appt.id, "COMPLETED")}
+                                                disabled={!hasStarted}
+                                                title={hasStarted ? undefined : "Session hasn't started yet"}
+                                                className={`flex-1 font-bold py-2 rounded-xl text-xs transition ${
+                                                    hasStarted
+                                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                        : "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                                                }`}
+                                            >
+                                                Complete
+                                            </button>
+                                            <button
+                                                onClick={() => void handleUpdateStatus(appt.id, "CANCELLED")}
+                                                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2 rounded-xl text-xs transition"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
+
+                                        {!hasStarted && (
+                                            <p className="text-[11px] text-gray-500 dark:text-gray-400 text-center">
+                                                ⏳ You can complete this once the session starts.
+                                            </p>
+                                        )}
                                     </div>
-                                </div>
-                            )}
+                                );
+                            })()}
 
                             {appt.notes && (
                                 <div className="mt-4 bg-amber-50 dark:bg-amber-950/40 p-3 rounded-xl border border-amber-200 dark:border-amber-800/60 text-xs text-amber-900 dark:text-amber-200">

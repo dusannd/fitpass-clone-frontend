@@ -2,34 +2,16 @@ import { useState, useEffect, useCallback } from "react";
 import type { FormEvent } from "react";
 import axios from "axios";
 import { api } from "../../api/axios";
-
-// --- INTERFACES ---
-interface GymLocation {
-    id: number;
-    name: string;
-    address: string | null;
-    is_24_7: boolean;
-}
-
-interface PlanRule {
-    id: number;
-    allowed_time_start: string | null; // "HH:MM:SS"
-    allowed_time_end: string | null;
-    allowed_days: string | null; // "0,1,2,3,4" (0=Monday, 6=Sunday)
-}
-
-interface Plan {
-    id: number;
-    name: string;
-    description: string | null;
-    price: number;
-    duration_days: number;
-    is_active: boolean;
-    locations: GymLocation[];
-    rule: PlanRule | null;
-}
-
-const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+import {
+    DAY_LABELS,
+    PLAN_TIERS,
+    formatTime,
+    getTierBadgeClass,
+    parseAllowedDays,
+    type GymLocation,
+    type Plan,
+    type PlanTier,
+} from "../../utils/subscription";
 
 export default function ManagePlans() {
     // --- TABS ---
@@ -53,6 +35,7 @@ export default function ManagePlans() {
     const [planDescription, setPlanDescription] = useState("");
     const [price, setPrice] = useState<number>(3000);
     const [durationDays, setDurationDays] = useState<number>(30);
+    const [planTier, setPlanTier] = useState<PlanTier>("Standard");
     const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>([]);
 
     // Optional rule
@@ -60,6 +43,10 @@ export default function ManagePlans() {
     const [allowedTimeStart, setAllowedTimeStart] = useState("");
     const [allowedTimeEnd, setAllowedTimeEnd] = useState("");
     const [allowedDays, setAllowedDays] = useState<number[]>([]);
+
+    // null = the form is creating a new plan; a number = it is editing that plan.
+    // One form serving both keeps the two field lists from drifting apart.
+    const [editingPlanId, setEditingPlanId] = useState<number | null>(null);
 
     const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
     const [togglingPlanId, setTogglingPlanId] = useState<number | null>(null);
@@ -144,48 +131,95 @@ export default function ManagePlans() {
         );
     };
 
-    const handleCreatePlan = async (e: FormEvent<HTMLFormElement>) => {
+    // Puts the form back to "create a new plan" state. Needed in three places now:
+    // after a successful submit, when starting an edit, and when cancelling one.
+    const resetPlanForm = () => {
+        setEditingPlanId(null);
+        setPlanName("");
+        setPlanDescription("");
+        setPrice(3000);
+        setDurationDays(30);
+        setPlanTier("Standard");
+        setSelectedLocationIds([]);
+        setRuleEnabled(false);
+        setAllowedTimeStart("");
+        setAllowedTimeEnd("");
+        setAllowedDays([]);
+    };
+
+    // Loads an existing plan into the form and switches it to edit mode.
+    const handleStartEdit = (plan: Plan) => {
+        setError("");
+        setSuccessMsg("");
+
+        setEditingPlanId(plan.id);
+        setPlanName(plan.name);
+        setPlanDescription(plan.description || "");
+        setPrice(plan.price);
+        setDurationDays(plan.duration_days);
+        setPlanTier(plan.tier);
+
+        // Locations and rules can't be changed here, but we still load them so the
+        // (disabled) panels show what this plan actually covers. Editing a price
+        // while blind to which gyms it applies to is worse than the risk of the
+        // read-only fields looking editable - which the note below them handles.
+        setSelectedLocationIds(plan.locations.map((loc) => loc.id));
+
+        setRuleEnabled(plan.rule !== null);
+        // The API stores "HH:MM:SS" but <input type="time"> only accepts "HH:MM",
+        // so it would silently render blank without formatTime.
+        setAllowedTimeStart(plan.rule?.allowed_time_start ? formatTime(plan.rule.allowed_time_start) : "");
+        setAllowedTimeEnd(plan.rule?.allowed_time_end ? formatTime(plan.rule.allowed_time_end) : "");
+        setAllowedDays(parseAllowedDays(plan.rule?.allowed_days));
+    };
+
+    const handleSubmitPlan = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setError("");
         setSuccessMsg("");
         setIsSubmittingPlan(true);
 
         try {
-            const payload: Record<string, unknown> = {
-                name: planName,
-                description: planDescription || null,
-                price,
-                duration_days: durationDays,
-                location_ids: selectedLocationIds,
-            };
-
-            // Only attach a rule if the admin actually enabled it
-            if (ruleEnabled) {
-                payload.rule = {
-                    allowed_time_start: allowedTimeStart || null,
-                    allowed_time_end: allowedTimeEnd || null,
-                    allowed_days: allowedDays.length > 0 ? allowedDays.join(",") : null,
+            if (editingPlanId !== null) {
+                // PUT /plans/{id} accepts only these five scalar fields. Locations and
+                // rules are create-time only on the backend, which is why the form
+                // shows them locked while editing rather than sending them.
+                await api.put(`/subscriptions/plans/${editingPlanId}`, {
+                    name: planName,
+                    description: planDescription || null,
+                    price,
+                    duration_days: durationDays,
+                    tier: planTier,
+                });
+                setSuccessMsg(`Plan "${planName}" updated!`);
+            } else {
+                const payload: Record<string, unknown> = {
+                    name: planName,
+                    description: planDescription || null,
+                    price,
+                    duration_days: durationDays,
+                    tier: planTier,
+                    location_ids: selectedLocationIds,
                 };
+
+                // Only attach a rule if the admin actually enabled it
+                if (ruleEnabled) {
+                    payload.rule = {
+                        allowed_time_start: allowedTimeStart || null,
+                        allowed_time_end: allowedTimeEnd || null,
+                        allowed_days: allowedDays.length > 0 ? allowedDays.join(",") : null,
+                    };
+                }
+
+                await api.post("/subscriptions/plans", payload);
+                setSuccessMsg(`Plan "${planName}" successfully created!`);
             }
 
-            await api.post("/subscriptions/plans", payload);
-            setSuccessMsg(`Plan "${planName}" successfully created!`);
-
-            // Clear form inputs
-            setPlanName("");
-            setPlanDescription("");
-            setPrice(3000);
-            setDurationDays(30);
-            setSelectedLocationIds([]);
-            setRuleEnabled(false);
-            setAllowedTimeStart("");
-            setAllowedTimeEnd("");
-            setAllowedDays([]);
-
+            resetPlanForm();
             await fetchPlans();
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to create plan.");
+                setError(err.response?.data?.detail || "Failed to save plan.");
             } else {
                 setError("An unexpected error occurred.");
             }
@@ -214,6 +248,10 @@ export default function ManagePlans() {
     if (loading) {
         return <div className="p-6 text-gray-500 font-bold">Loading...</div>;
     }
+
+    // Locations and access rules are create-time only on the backend, so in edit mode
+    // they are shown for context but not editable.
+    const fieldsLocked = editingPlanId !== null;
 
     return (
         <div className="max-w-6xl mx-auto flex flex-col gap-6 h-full">
@@ -376,11 +414,23 @@ export default function ManagePlans() {
                     {/* CREATE PLAN FORM */}
                     <div className="w-full lg:w-1/3 sticky top-6">
                         <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-sm p-6 sm:p-8 border border-gray-200 dark:border-slate-800 transition-colors duration-200">
-                            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">
-                                Create New Plan
-                            </h2>
+                            <div className="flex items-start justify-between gap-3 mb-6">
+                                <h2 className="text-xl font-bold text-gray-900 dark:text-white">
+                                    {editingPlanId !== null ? "Edit Plan" : "Create New Plan"}
+                                </h2>
 
-                            <form onSubmit={(e) => void handleCreatePlan(e)} className="flex flex-col gap-5">
+                                {editingPlanId !== null && (
+                                    <button
+                                        type="button"
+                                        onClick={resetPlanForm}
+                                        className="shrink-0 text-xs font-bold text-gray-500 dark:text-gray-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors underline"
+                                    >
+                                        Cancel edit
+                                    </button>
+                                )}
+                            </div>
+
+                            <form onSubmit={(e) => void handleSubmitPlan(e)} className="flex flex-col gap-5">
                                 <div>
                                     <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                         Plan Name
@@ -413,12 +463,15 @@ export default function ManagePlans() {
                                         <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                             Price (RSD)
                                         </label>
+                                        {/* parseFloat, not parseInt: the backend price is a float, and the
+                                            edit form now loads an existing price back into this field, so
+                                            truncating here would silently change the price. */}
                                         <input
                                             type="number"
                                             required
                                             min="0"
                                             value={price}
-                                            onChange={(e) => setPrice(parseInt(e.target.value, 10) || 0)}
+                                            onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
                                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                         />
                                     </div>
@@ -437,28 +490,67 @@ export default function ManagePlans() {
                                     </div>
                                 </div>
 
+                                {/* PLAN TIER */}
+                                {/* Drives how premium the card looks on the member pricing page */}
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                                        Plan Tier
+                                    </label>
+                                    <select
+                                        value={planTier}
+                                        onChange={(e) => setPlanTier(e.target.value as PlanTier)}
+                                        className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                    >
+                                        {PLAN_TIERS.map((tier) => (
+                                            <option key={tier} value={tier}>
+                                                {tier}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+                                        Controls how the card is styled for members. Pro is marked "Most Popular".
+                                    </p>
+                                </div>
+
+                                {/* LOCATIONS + RULES */}
+                                {/* PUT /plans/{id} accepts only the scalar fields above, so while
+                                    editing these are shown for context but locked. They stay
+                                    visible on purpose: you shouldn't have to edit a price blind
+                                    to which gyms the plan covers. */}
+
                                 {/* LOCATION CHECKBOXES */}
-                                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-2xl transition-colors">
-                                    <label className="block text-sm font-bold text-blue-900 dark:text-blue-300 mb-3">
+                                <div className={`p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-2xl transition-colors ${
+                                    fieldsLocked ? "opacity-60" : ""
+                                }`}>
+                                    <label className="block text-sm font-bold text-blue-900 dark:text-blue-300 mb-1">
                                         Allowed Gym Locations
                                     </label>
+
+                                    {fieldsLocked && (
+                                        <p className="text-xs text-blue-700 dark:text-blue-400 opacity-80 mb-3">
+                                            🔒 Set when the plan was created — read only.
+                                        </p>
+                                    )}
 
                                     {locations.length === 0 ? (
                                         <p className="text-xs text-blue-700 dark:text-blue-400 opacity-80">
                                             No locations yet — add one in the Locations tab first.
                                         </p>
                                     ) : (
-                                        <div className="grid grid-cols-2 gap-2">
+                                        <div className={`grid grid-cols-2 gap-2 ${fieldsLocked ? "mt-0" : "mt-2"}`}>
                                             {locations.map((loc) => (
                                                 <label
                                                     key={loc.id}
-                                                    className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2 cursor-pointer select-none"
+                                                    className={`flex items-center gap-2 bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-800 rounded-xl px-3 py-2 select-none ${
+                                                        fieldsLocked ? "cursor-not-allowed" : "cursor-pointer"
+                                                    }`}
                                                 >
                                                     <input
                                                         type="checkbox"
                                                         checked={selectedLocationIds.includes(loc.id)}
                                                         onChange={() => toggleSelectedLocation(loc.id)}
-                                                        className="h-4 w-4 rounded accent-blue-600"
+                                                        disabled={fieldsLocked}
+                                                        className="h-4 w-4 rounded accent-blue-600 disabled:cursor-not-allowed"
                                                     />
                                                     <span className="text-xs font-bold text-gray-800 dark:text-white truncate">
                                                         {loc.name}
@@ -470,20 +562,27 @@ export default function ManagePlans() {
                                 </div>
 
                                 {/* OPTIONAL RULE */}
-                                <div className="p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50 rounded-2xl transition-colors">
-                                    <label className="flex items-center gap-2 cursor-pointer select-none mb-1">
+                                <div className={`p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50 rounded-2xl transition-colors ${
+                                    fieldsLocked ? "opacity-60" : ""
+                                }`}>
+                                    <label className={`flex items-center gap-2 select-none mb-1 ${
+                                        fieldsLocked ? "cursor-not-allowed" : "cursor-pointer"
+                                    }`}>
                                         <input
                                             type="checkbox"
                                             checked={ruleEnabled}
                                             onChange={(e) => setRuleEnabled(e.target.checked)}
-                                            className="h-4 w-4 rounded accent-purple-600"
+                                            disabled={fieldsLocked}
+                                            className="h-4 w-4 rounded accent-purple-600 disabled:cursor-not-allowed"
                                         />
                                         <span className="text-sm font-bold text-purple-900 dark:text-purple-300">
                                             Restrict access hours/days
                                         </span>
                                     </label>
                                     <p className="text-xs text-purple-700 dark:text-purple-400 opacity-80 mb-3">
-                                        Leave off for unrestricted 24/7 access.
+                                        {fieldsLocked
+                                            ? "🔒 Set when the plan was created — read only."
+                                            : "Leave off for unrestricted 24/7 access."}
                                     </p>
 
                                     {ruleEnabled && (
@@ -497,7 +596,8 @@ export default function ManagePlans() {
                                                         type="time"
                                                         value={allowedTimeStart}
                                                         onChange={(e) => setAllowedTimeStart(e.target.value)}
-                                                        className="w-full bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-700 text-gray-900 dark:text-white p-2 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+                                                        disabled={fieldsLocked}
+                                                        className="w-full bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-700 text-gray-900 dark:text-white p-2 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all disabled:cursor-not-allowed"
                                                     />
                                                 </div>
                                                 <div className="w-1/2">
@@ -508,7 +608,8 @@ export default function ManagePlans() {
                                                         type="time"
                                                         value={allowedTimeEnd}
                                                         onChange={(e) => setAllowedTimeEnd(e.target.value)}
-                                                        className="w-full bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-700 text-gray-900 dark:text-white p-2 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all"
+                                                        disabled={fieldsLocked}
+                                                        className="w-full bg-white dark:bg-slate-900 border border-purple-200 dark:border-purple-700 text-gray-900 dark:text-white p-2 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all disabled:cursor-not-allowed"
                                                     />
                                                 </div>
                                             </div>
@@ -523,7 +624,8 @@ export default function ManagePlans() {
                                                             key={label}
                                                             type="button"
                                                             onClick={() => toggleSelectedDay(index)}
-                                                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                                                            disabled={fieldsLocked}
+                                                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:cursor-not-allowed ${
                                                                 allowedDays.includes(index)
                                                                     ? "bg-purple-600 text-white"
                                                                     : "bg-white dark:bg-slate-900 text-gray-500 dark:text-gray-400 border border-purple-200 dark:border-purple-800"
@@ -543,7 +645,9 @@ export default function ManagePlans() {
                                     disabled={isSubmittingPlan}
                                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition-all shadow-sm hover:shadow-md disabled:opacity-50 mt-2"
                                 >
-                                    {isSubmittingPlan ? "Creating..." : "Create Plan"}
+                                    {isSubmittingPlan
+                                        ? "Saving..."
+                                        : editingPlanId !== null ? "Save Changes" : "Create Plan"}
                                 </button>
                             </form>
                         </div>
@@ -567,19 +671,26 @@ export default function ManagePlans() {
                                         className="bg-white dark:bg-slate-900 p-6 rounded-3xl shadow-sm border border-gray-200 dark:border-slate-800 transition-colors duration-200 flex flex-col justify-between"
                                     >
                                         <div>
-                                            <div className="flex justify-between items-start mb-3">
+                                            <div className="flex justify-between items-start gap-2 mb-3">
                                                 <h3 className="font-bold text-xl text-gray-900 dark:text-white">
                                                     {plan.name}
                                                 </h3>
-                                                <span
-                                                    className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
-                                                        plan.is_active
-                                                            ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800"
-                                                            : "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800"
-                                                    }`}
-                                                >
-                                                    {plan.is_active ? "Active" : "Inactive"}
-                                                </span>
+                                                <div className="flex flex-wrap justify-end gap-1.5 shrink-0">
+                                                    <span
+                                                        className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${getTierBadgeClass(plan.tier)}`}
+                                                    >
+                                                        {plan.tier}
+                                                    </span>
+                                                    <span
+                                                        className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                                                            plan.is_active
+                                                                ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800"
+                                                                : "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800"
+                                                        }`}
+                                                    >
+                                                        {plan.is_active ? "Active" : "Inactive"}
+                                                    </span>
+                                                </div>
                                             </div>
                                             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
                                                 {plan.description || "No description provided."}
@@ -619,19 +730,32 @@ export default function ManagePlans() {
                                             </div>
                                         </div>
 
-                                        <button
-                                            onClick={() => void handleToggleActive(plan.id)}
-                                            disabled={togglingPlanId !== null}
-                                            className={`w-full font-bold py-2.5 rounded-xl text-sm transition-all disabled:opacity-50 ${
-                                                plan.is_active
-                                                    ? "bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50"
-                                                    : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50"
-                                            }`}
-                                        >
-                                            {togglingPlanId === plan.id
-                                                ? "Updating..."
-                                                : plan.is_active ? "Deactivate" : "Activate"}
-                                        </button>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => handleStartEdit(plan)}
+                                                className={`flex-1 font-bold py-2.5 rounded-xl text-sm transition-all ${
+                                                    editingPlanId === plan.id
+                                                        ? "bg-blue-600 text-white"
+                                                        : "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50"
+                                                }`}
+                                            >
+                                                {editingPlanId === plan.id ? "✏️ Editing" : "✏️ Edit"}
+                                            </button>
+
+                                            <button
+                                                onClick={() => void handleToggleActive(plan.id)}
+                                                disabled={togglingPlanId !== null}
+                                                className={`flex-1 font-bold py-2.5 rounded-xl text-sm transition-all disabled:opacity-50 ${
+                                                    plan.is_active
+                                                        ? "bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50"
+                                                        : "bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50"
+                                                }`}
+                                            >
+                                                {togglingPlanId === plan.id
+                                                    ? "Updating..."
+                                                    : plan.is_active ? "Deactivate" : "Activate"}
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>

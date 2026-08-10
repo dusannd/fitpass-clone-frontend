@@ -3,93 +3,7 @@ import { useOutletContext, useNavigate, useSearchParams } from "react-router-dom
 import axios from "axios";
 import { api } from "../../api/axios";
 import type { User } from "../../components/Layout";
-
-// --- TYPES ---
-// Matches the nested JSON from GET /subscriptions/plans (locations + rule eagerly loaded)
-interface GymLocation {
-    id: number;
-    name: string;
-    address: string | null;
-    is_24_7: boolean;
-}
-
-interface PlanRule {
-    id: number;
-    allowed_time_start: string | null; // "HH:MM:SS"
-    allowed_time_end: string | null;
-    allowed_days: string | null; // e.g. "0,1,2,3,4" (0=Monday, 6=Sunday)
-}
-
-interface Plan {
-    id: number;
-    name: string;
-    description: string | null;
-    price: number;
-    duration_days: number;
-    is_active: boolean;
-    locations: GymLocation[];
-    rule: PlanRule | null;
-}
-
-// --- HELPERS ---
-const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-// "0,1,2,3,4" -> "Mon-Fri" style summary
-function formatAllowedDays(allowedDays: string): string {
-    const days = allowedDays
-        .split(",")
-        .map((d) => parseInt(d.trim(), 10))
-        .filter((d) => !isNaN(d) && d >= 0 && d <= 6);
-
-    if (days.length === 7) return "Every day";
-    return days.map((d) => DAY_LABELS[d]).join(", ");
-}
-
-// "09:00:00" -> "09:00"
-function formatTime(t: string): string {
-    return t.slice(0, 5);
-}
-
-// --- DECOY PRICING THEME ---
-// Parses the plan name and returns the Tailwind classes for its tier.
-// Standard/Basic = the plain "looks basic" option. Gold/Pro = the bestseller
-// we push people towards. VIP/Premium = the expensive anchor that makes Gold
-// look reasonable.
-function getPlanTheme(name: string) {
-    const lower = name.toLowerCase();
-
-    if (lower.includes("gold") || lower.includes("pro")) {
-        return {
-            cardClass: "bg-gradient-to-br from-amber-400 to-orange-500 border-transparent text-white scale-105 shadow-2xl shadow-orange-500/30 z-10",
-            priceClass: "text-white",
-            subTextClass: "text-white/80",
-            checkColor: "text-white",
-            buttonClass: "bg-white text-orange-600 hover:bg-orange-50",
-            isPopular: true,
-        };
-    }
-
-    if (lower.includes("vip") || lower.includes("premium")) {
-        return {
-            cardClass: "bg-gray-900 border border-purple-500 text-white shadow-xl shadow-purple-500/50",
-            priceClass: "text-white",
-            subTextClass: "text-gray-400",
-            checkColor: "text-purple-400",
-            buttonClass: "bg-purple-600 hover:bg-purple-500 text-white",
-            isPopular: false,
-        };
-    }
-
-    // Default: Standard / Basic (or anything else)
-    return {
-        cardClass: "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white",
-        priceClass: "text-slate-900 dark:text-white",
-        subTextClass: "text-gray-500 dark:text-gray-400",
-        checkColor: "text-emerald-500",
-        buttonClass: "bg-blue-600 hover:bg-blue-700 text-white",
-        isPopular: false,
-    };
-}
+import { formatAllowedDays, formatTime, getPlanTheme, type Plan } from "../../utils/subscription";
 
 export default function Subscriptions() {
     // Uzimamo 'user' iz Layout-a kako bismo proverili da li već ima aktivnu pretplatu
@@ -202,7 +116,7 @@ export default function Subscriptions() {
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start pt-4">
                     {plans.map((plan) => {
-                        const theme = getPlanTheme(plan.name);
+                        const theme = getPlanTheme(plan.tier);
 
                         // Build the feature list from the plan's real nested data
                         const features: string[] = [

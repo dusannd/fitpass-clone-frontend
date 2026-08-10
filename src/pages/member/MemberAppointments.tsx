@@ -24,6 +24,10 @@ interface MyTrainer {
     trainer: UserInfo;
 }
 
+// Mirrors MAX_BOOKING_HORIZON_DAYS in app/api/coaching.py. The server is still the
+// one that enforces it; this just stops the calendar offering dates it will reject.
+const MAX_BOOKING_HORIZON_DAYS = 60;
+
 export default function MemberAppointments() {
     const [appointments, setAppointments] = useState<Appointment[]>([]);
     const [myTrainers, setMyTrainers] = useState<MyTrainer[]>([]);
@@ -94,8 +98,23 @@ export default function MemberAppointments() {
         }
     };
 
-    // Dobijamo današnji datum u formatu "YYYY-MM-DD" da blokiramo biranje jučerašnjeg dana u HTML-u
-    const todayStr = new Date().toISOString().split("T")[0];
+    // --- DATE PICKER BOUNDS ---
+    // Built from LOCAL date parts, not toISOString(). toISOString() converts to UTC
+    // first, so late at night in a UTC+X timezone it hands back yesterday's date and
+    // the calendar would block a day the user can legitimately still book.
+    const toDateInputValue = (d: Date): string => {
+        const month = String(d.getMonth() + 1).padStart(2, "0");
+        const day = String(d.getDate()).padStart(2, "0");
+        return `${d.getFullYear()}-${month}-${day}`;
+    };
+
+    const todayStr = toDateInputValue(new Date());
+
+    // The backend caps bookings at 60 days out, so the calendar greys out anything
+    // further instead of letting the user find out via an error message.
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + MAX_BOOKING_HORIZON_DAYS);
+    const maxDateStr = toDateInputValue(maxDate);
 
     if (loading) return <div className="p-6 text-gray-500 dark:text-gray-400 font-bold">Loading...</div>;
 
@@ -147,10 +166,14 @@ export default function MemberAppointments() {
                                     type="date"
                                     required
                                     min={todayStr} // Zabrana biranja u prošlosti direkt u kalendaru
+                                    max={maxDateStr} // I ne dalje od 60 dana unaprijed
                                     value={sessionDate}
                                     onChange={(e) => setSessionDate(e.target.value)}
                                     className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                 />
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+                                    Up to {MAX_BOOKING_HORIZON_DAYS} days in advance.
+                                </p>
                             </div>
 
                             <div className="flex gap-4">
