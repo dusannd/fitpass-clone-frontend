@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import axios from "axios";
 import { api } from "../../api/axios";
 import { ProgressCard } from "../../components/ProgressCard";
@@ -10,6 +10,41 @@ interface Trainer {
     id: number;
     first_name: string;
 }
+
+// The three flavours a plan card can take. They share one shell and differ only in the
+// accent, the badge and the call to action.
+type PlanCardType = "explore" | "my_plan" | "assigned";
+
+// --- CARD VARIANT LOOKUPS ---
+// Kept next to each other so the visual language stays cohesive: change a colour here and
+// every card of that type follows, instead of hunting through branched JSX.
+const CARD_SHELL: Record<PlanCardType, string> = {
+    assigned: "border-emerald-200 dark:border-emerald-900/60 bg-gradient-to-br from-emerald-50/60 to-white dark:from-emerald-950/25 dark:to-slate-900",
+    my_plan: "border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900",
+    explore: "border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900",
+};
+
+// The left stripe is what tells the three types apart at a glance while scanning the grid.
+const CARD_STRIPE: Record<PlanCardType, string> = {
+    assigned: "bg-gradient-to-b from-emerald-500 to-blue-500",
+    my_plan: "bg-blue-500",
+    explore: "bg-gray-200 dark:bg-slate-700",
+};
+
+const CARD_BADGE: Record<PlanCardType, { label: string; className: string }> = {
+    assigned: {
+        label: "🎯 Trainer Assigned",
+        className: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800",
+    },
+    my_plan: {
+        label: "Saved",
+        className: "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-slate-700",
+    },
+    explore: {
+        label: "Public 🔵",
+        className: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800",
+    },
+};
 
 // One exercise inside a past session, rebuilt from its individual set rows.
 interface GroupedExercise {
@@ -115,54 +150,83 @@ export default function Workouts() {
     };
 
     // --- RENDER HELPERS ---
-    // Assigned plans are not drawn by this helper - they get the richer card in the
-    // "Assigned by Your Trainer" section above the tabs.
-    const renderPlanCard = (plan: WorkoutPlan, type: "explore" | "my_plan") => (
-        <div key={plan.id} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
-            <div>
-                <div className="flex justify-between items-start mb-2">
-                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">{plan.name}</h3>
-                    {type === "explore" && (
-                        <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 text-[10px] font-black uppercase px-2 py-1 rounded-full border border-blue-200 dark:border-blue-800">
-                            Public 🔵
+    // Every plan on the page goes through here, assigned ones included. They are ordinary
+    // cards that happen to wear an emerald accent, not a separate widget.
+    const renderPlanCard = (plan: WorkoutPlan, type: PlanCardType) => {
+        const badge = CARD_BADGE[type];
+
+        return (
+            <div
+                key={plan.id}
+                className={`relative overflow-hidden border rounded-2xl p-6 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all flex flex-col justify-between ${CARD_SHELL[type]}`}
+            >
+                {/* Accent stripe: the one element that makes the card type readable at a glance */}
+                <div className={`absolute inset-y-0 left-0 w-1.5 ${CARD_STRIPE[type]}`}></div>
+
+                <div className="pl-2">
+                    <div className="flex justify-between items-start gap-2 mb-2">
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">{plan.name}</h3>
+                        <span className={`shrink-0 text-[10px] font-black uppercase px-2 py-1 rounded-full border ${badge.className}`}>
+                            {badge.label}
                         </span>
+                    </div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{plan.description}</p>
+
+                    <div className="bg-gray-50 dark:bg-slate-800/50 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50 mb-6">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Exercises ({plan.exercises.length})</p>
+                        <ul className="text-sm text-gray-700 dark:text-gray-300 space-y-1.5">
+                            {plan.exercises.slice(0, 3).map((ex) => (
+                                <li key={ex.id} className="flex justify-between gap-3">
+                                    <span className="truncate">{ex.name}</span>
+                                    <span className="text-gray-500 shrink-0">{ex.sets}x{ex.reps}</span>
+                                </li>
+                            ))}
+                            {plan.exercises.length > 3 && (
+                                <li className="text-xs text-blue-500 font-bold pt-1">+{plan.exercises.length - 3} more...</li>
+                            )}
+                        </ul>
+                    </div>
+                </div>
+
+                <div className="pl-2">
+                    {type === "explore" ? (
+                        <button
+                            onClick={() => void handleFollowPlan(plan.id)}
+                            className="w-full bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-900 dark:text-white font-bold py-2.5 rounded-xl transition-colors"
+                        >
+                            Save & Follow Plan
+                        </button>
+                    ) : (
+                        <button
+                            onClick={() => setActiveWorkout(plan)}
+                            className={`w-full text-white font-bold py-2.5 rounded-xl transition-all shadow-sm active:scale-[0.99] touch-manipulation ${
+                                type === "assigned"
+                                    ? "bg-emerald-600 hover:bg-emerald-700"
+                                    : "bg-blue-600 hover:bg-blue-700"
+                            }`}
+                        >
+                            Start Workout 🚀
+                        </button>
                     )}
                 </div>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{plan.description}</p>
-
-                <div className="bg-gray-50 dark:bg-slate-800/50 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50 mb-6">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Exercises ({plan.exercises.length})</p>
-                    <ul className="text-sm text-gray-700 dark:text-gray-300 space-y-1.5">
-                        {plan.exercises.slice(0, 3).map((ex) => (
-                            <li key={ex.id} className="flex justify-between">
-                                <span>{ex.name}</span>
-                                <span className="text-gray-500">{ex.sets}x{ex.reps}</span>
-                            </li>
-                        ))}
-                        {plan.exercises.length > 3 && (
-                            <li className="text-xs text-blue-500 font-bold pt-1">+{plan.exercises.length - 3} more...</li>
-                        )}
-                    </ul>
-                </div>
             </div>
+        );
+    };
 
-            {type === "explore" ? (
-                <button
-                    onClick={() => void handleFollowPlan(plan.id)}
-                    className="w-full bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-900 dark:text-white font-bold py-2.5 rounded-xl transition-colors"
-                >
-                    Save & Follow Plan
-                </button>
-            ) : (
-                <button
-                    onClick={() => setActiveWorkout(plan)}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl transition-colors shadow-sm"
-                >
-                    Start Workout 🚀
-                </button>
-            )}
-        </div>
-    );
+    // --- MY PLANS LIBRARY ---
+    // Assigned plans lead: what a trainer built for you outranks anything you saved
+    // yourself. The id filter is cheap insurance - the two endpoints should never return
+    // the same plan, but if they ever did React would warn about duplicate keys and the
+    // plan would be drawn twice.
+    const myPlans = useMemo(() => {
+        const assignedIds = new Set(privatePlans.map(p => p.id));
+        return [
+            ...privatePlans.map(plan => ({ plan, type: "assigned" as const })),
+            ...savedPlans
+                .filter(p => !assignedIds.has(p.id))
+                .map(plan => ({ plan, type: "my_plan" as const })),
+        ];
+    }, [privatePlans, savedPlans]);
 
     if (loading) return <div className="p-6 text-gray-500 font-bold">Loading workouts...</div>;
 
@@ -179,72 +243,6 @@ export default function Workouts() {
                     Find plans, crush your sets, and track your progress.
                 </p>
             </div>
-
-            {/*
-              ASSIGNED BY YOUR TRAINER
-              Sits above the tabs on purpose. What your trainer built specifically for you
-              is the single most important thing on this page, so it should never be hidden
-              behind a tab next to plans you saved yourself.
-            */}
-            {privatePlans.length > 0 && (
-                <div className="mb-8">
-                    <div className="flex items-center gap-2 mb-4">
-                        <span className="text-xl">🎯</span>
-                        <h2 className="text-xl font-black text-gray-900 dark:text-white">Assigned by Your Trainer</h2>
-                        <span className="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 text-[10px] font-black uppercase px-2 py-1 rounded-full border border-emerald-200 dark:border-emerald-800">
-                            {privatePlans.length} {privatePlans.length === 1 ? "plan" : "plans"}
-                        </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                        {privatePlans.map((plan) => (
-                            <div
-                                key={plan.id}
-                                className="relative overflow-hidden rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-gradient-to-br from-emerald-50 via-white to-blue-50 dark:from-emerald-950/40 dark:via-slate-900 dark:to-blue-950/30 p-6 shadow-sm hover:shadow-lg transition-shadow flex flex-col"
-                            >
-                                {/* Accent stripe so the card reads as "special" at a glance */}
-                                <div className="absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b from-emerald-500 to-blue-500"></div>
-
-                                <div className="flex-1 pl-2">
-                                    <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1">
-                                        Personal Plan
-                                    </p>
-                                    <h3 className="text-2xl font-black text-gray-900 dark:text-white leading-tight">
-                                        {plan.name}
-                                    </h3>
-                                    {plan.description && (
-                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1.5">{plan.description}</p>
-                                    )}
-
-                                    {/* Exercise chips: enough of a preview to know what you are walking into */}
-                                    <div className="flex flex-wrap gap-1.5 mt-4">
-                                        {plan.exercises.slice(0, 4).map((ex) => (
-                                            <span
-                                                key={ex.id}
-                                                className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-800/80 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-slate-700"
-                                            >
-                                                {ex.name} · {ex.sets}×{ex.reps}
-                                            </span>
-                                        ))}
-                                        {plan.exercises.length > 4 && (
-                                            <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-800/80 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-slate-700">
-                                                +{plan.exercises.length - 4} more
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <button
-                                    onClick={() => setActiveWorkout(plan)}
-                                    className="w-full mt-6 ml-0 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3.5 rounded-xl transition-all shadow-md hover:shadow-lg active:scale-[0.99] touch-manipulation text-base"
-                                >
-                                    Start Workout 🚀
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {/* TABS NAVIGATION */}
             <div className="flex gap-2 p-1 bg-gray-100 dark:bg-slate-900 rounded-2xl w-full sm:w-fit mb-8 border border-gray-200 dark:border-slate-800 transition-colors">
@@ -271,21 +269,17 @@ export default function Workouts() {
             {/* TAB CONTENT: MY PLANS */}
             {activeTab === "my_plans" && (
                 <div>
-                    {/*
-                      Only plans the member saved themselves. The ones their trainer
-                      assigned have their own section above the tabs, so listing them
-                      here as well would show every assigned plan twice on one screen.
-                    */}
-                    {savedPlans.length === 0 ? (
+                    {/* The member's whole library in one grid: assigned plans first, then saved ones. */}
+                    {myPlans.length === 0 ? (
                         <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-gray-200 dark:border-slate-800 text-center transition-colors">
                             <span className="text-4xl mb-4 block">🏃‍♂️</span>
-                            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No saved plans</h3>
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No plans yet</h3>
                             <p className="text-gray-500 dark:text-gray-400 mb-6">You haven't saved any plans yet. Go to Explore or ask your trainer!</p>
                             <button onClick={() => setActiveTab("explore")} className="bg-blue-600 text-white font-bold py-2 px-6 rounded-xl hover:bg-blue-700 transition">Go to Explore</button>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {savedPlans.map(p => renderPlanCard(p, "my_plan"))}
+                            {myPlans.map(({ plan, type }) => renderPlanCard(plan, type))}
                         </div>
                     )}
                 </div>
