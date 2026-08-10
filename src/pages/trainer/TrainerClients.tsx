@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { api } from "../../api/axios";
 import Avatar from "../../components/Avatar";
+import { ProgressCard } from "../../components/ProgressCard";
 import { parseGoals } from "../../utils/profile";
 import type { UserProfile } from "../../components/Layout";
+import type { WorkoutSession } from "../../utils/workout";
 
 interface ClientInfo {
     id: number;
@@ -28,6 +30,14 @@ export default function TrainerClients() {
     const [error, setError] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
 
+    // --- PROGRESS MODAL ---
+    // Which client we are inspecting, plus their history. Kept out of the card list so
+    // opening the modal never refetches the clients themselves.
+    const [progressClient, setProgressClient] = useState<ClientInfo | null>(null);
+    const [progressSessions, setProgressSessions] = useState<WorkoutSession[]>([]);
+    const [progressLoading, setProgressLoading] = useState(false);
+    const [progressError, setProgressError] = useState("");
+
     const fetchData = async () => {
         try {
             const [pendingRes, activeRes] = await Promise.all([
@@ -46,6 +56,40 @@ export default function TrainerClients() {
     useEffect(() => {
         void fetchData();
     }, []);
+
+    // --- PROGRESS MODAL ACTIONS ---
+    const openProgress = async (client: ClientInfo) => {
+        setProgressClient(client);
+        setProgressSessions([]);
+        setProgressError("");
+        setProgressLoading(true);
+
+        try {
+            const res = await api.get<WorkoutSession[]>(`/coaching/clients/${client.id}/progress`);
+            setProgressSessions(res.data);
+        } catch (err: unknown) {
+            if (axios.isAxiosError(err)) {
+                setProgressError(err.response?.data?.detail || "Failed to load this client's progress.");
+            } else {
+                setProgressError("An error occurred.");
+            }
+        } finally {
+            setProgressLoading(false);
+        }
+    };
+
+    const closeProgress = useCallback(() => setProgressClient(null), []);
+
+    // Escape closes the modal, same behaviour as the profile menu in Layout.
+    useEffect(() => {
+        if (!progressClient) return;
+
+        const handleEscape = (e: KeyboardEvent) => {
+            if (e.key === "Escape") closeProgress();
+        };
+        document.addEventListener("keydown", handleEscape);
+        return () => document.removeEventListener("keydown", handleEscape);
+    }, [progressClient, closeProgress]);
 
     const handleResponse = async (linkId: number, status: "ACCEPTED" | "REJECTED") => {
         setError("");
@@ -205,12 +249,76 @@ export default function TrainerClients() {
                                             ))}
                                         </div>
                                     )}
+
+                                    {/* See how they are actually lifting, without having to ask them */}
+                                    <button
+                                        onClick={() => void openProgress(link.client)}
+                                        className="w-full mt-4 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-bold py-2.5 rounded-lg transition-colors"
+                                    >
+                                        📈 View Progress
+                                    </button>
                                 </div>
                             );
                         })}
                     </div>
                 )}
             </div>
+
+            {/* --- CLIENT PROGRESS MODAL (frosted glass) --- */}
+            {progressClient && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+                        onClick={closeProgress}
+                    ></div>
+
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={`Progress for ${progressClient.first_name} ${progressClient.last_name}`}
+                        className="relative w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden rounded-3xl border border-white/20 dark:border-white/10 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-2xl animate-menu-pop"
+                    >
+                        {/* WHO ARE WE LOOKING AT */}
+                        <div className="p-6 border-b border-gray-200/60 dark:border-slate-700/60 flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <Avatar profile={progressClient.profile} firstName={progressClient.first_name} size="md" />
+                                <div className="min-w-0">
+                                    <h2 className="text-xl font-black text-gray-900 dark:text-white truncate">
+                                        {progressClient.first_name} {progressClient.last_name}
+                                    </h2>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">Strength progress</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={closeProgress}
+                                aria-label="Close progress"
+                                className="h-10 w-10 shrink-0 bg-gray-200/80 dark:bg-slate-800/80 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40 dark:hover:text-red-400 rounded-full flex items-center justify-center transition-colors font-bold text-gray-600 dark:text-gray-400"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div className="p-6 overflow-y-auto flex-1">
+                            {progressLoading ? (
+                                <div className="flex justify-center py-12">
+                                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+                                </div>
+                            ) : progressError ? (
+                                <div className="bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 p-4 rounded-xl font-bold text-sm border border-red-200 dark:border-red-800">
+                                    {progressError}
+                                </div>
+                            ) : progressSessions.length === 0 ? (
+                                <div className="text-center py-10 text-gray-500 dark:text-gray-400">
+                                    <span className="text-4xl mb-3 block">📭</span>
+                                    <p className="font-bold">This client hasn't logged any workouts yet.</p>
+                                </div>
+                            ) : (
+                                <ProgressCard sessions={progressSessions} />
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

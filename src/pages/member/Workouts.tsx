@@ -1,50 +1,54 @@
 import { useEffect, useState, useCallback } from "react";
-import type { FormEvent } from "react";
 import axios from "axios";
 import { api } from "../../api/axios";
 import { ProgressCard } from "../../components/ProgressCard";
+import LiveWorkoutModal from "../../components/LiveWorkoutModal";
+import type { ExerciseLog, WorkoutPlan, WorkoutSession } from "../../utils/workout";
 
 // --- INTERFACES ---
-interface Exercise {
-    id: number;
-    name: string;
-    sets: number;
-    reps: string;
-    rest_time_seconds: number;
-    requires_weight: boolean;
-}
-
-interface WorkoutPlan {
-    id: number;
-    trainer_id: number;
-    client_id: number | null;
-    name: string;
-    description: string;
-    exercises: Exercise[];
-}
-
-interface ExerciseLog {
-    id: number;
-    exercise_id: number;
-    sets_completed: number;
-    reps_completed: string;
-    weight_kg: number | null;
-    exercise: Exercise;
-}
-
-interface WorkoutSession {
-    id: number;
-    user_id: number;
-    plan_id: number;
-    date: string;
-    notes: string;
-    exercise_logs: ExerciseLog[];
-}
-
 interface Trainer {
     id: number;
     first_name: string;
 }
+
+// One exercise inside a past session, rebuilt from its individual set rows.
+interface GroupedExercise {
+    key: string;
+    name: string;
+    sets: ExerciseLog[];
+    topWeight: number | null;
+}
+
+/**
+ * The API returns one row per set. The history screen wants one tile per exercise,
+ * headlined by the heaviest set - which is exactly what counts as the PR.
+ */
+const groupLogsByExercise = (logs: ExerciseLog[]): GroupedExercise[] => {
+    const groups = new Map<string, GroupedExercise>();
+
+    logs.forEach((log) => {
+        // exercise_id is nullable (the trainer may have deleted the exercise), so fall
+        // back to the name to avoid merging unrelated rows under a single "null" key.
+        const key = log.exercise_id !== null ? `id-${log.exercise_id}` : `name-${log.exercise?.name ?? "unknown"}`;
+
+        const existing = groups.get(key);
+        if (existing) {
+            existing.sets.push(log);
+            if (log.weight_kg !== null && (existing.topWeight === null || log.weight_kg > existing.topWeight)) {
+                existing.topWeight = log.weight_kg;
+            }
+        } else {
+            groups.set(key, {
+                key,
+                name: log.exercise?.name || "Unknown",
+                sets: [log],
+                topWeight: log.weight_kg,
+            });
+        }
+    });
+
+    return Array.from(groups.values());
+};
 
 export default function Workouts() {
     // --- STATE ---
@@ -58,9 +62,6 @@ export default function Workouts() {
 
     // Modal state
     const [activeWorkout, setActiveWorkout] = useState<WorkoutPlan | null>(null);
-    const [workoutLog, setWorkoutLog] = useState<{ [exerciseId: number]: string }>({});
-    const [workoutNotes, setWorkoutNotes] = useState("");
-    const [isSubmittingLog, setIsSubmittingLog] = useState(false);
 
     // --- DATA FETCHING ---
     const fetchAllData = useCallback(async () => {
@@ -106,50 +107,21 @@ export default function Workouts() {
         }
     };
 
-    const handleLogWorkout = async (e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
-        if (!activeWorkout) return;
-        setIsSubmittingLog(true);
-
-        try {
-            const payload = {
-                plan_id: activeWorkout.id,
-                notes: workoutNotes,
-                exercises: activeWorkout.exercises.map((ex) => ({
-                    exercise_id: ex.id,
-                    sets_completed: ex.sets,
-                    reps_completed: ex.reps,
-                    weight_kg: workoutLog[ex.id] ? parseFloat(workoutLog[ex.id]) : null
-                }))
-            };
-
-            await api.post("/workouts/log-session", payload);
-
-            setActiveWorkout(null);
-            setWorkoutLog({});
-            setWorkoutNotes("");
-            await fetchAllData();
-            setActiveTab("history");
-
-        } catch (err) {
-            window.alert("Failed to save workout session.");
-            console.error(err);
-        } finally {
-            setIsSubmittingLog(false);
-        }
+    // The modal owns the logging itself, we only refresh and switch to the history tab.
+    const handleWorkoutSaved = async () => {
+        setActiveWorkout(null);
+        await fetchAllData();
+        setActiveTab("history");
     };
 
     // --- RENDER HELPERS ---
-    const renderPlanCard = (plan: WorkoutPlan, type: "explore" | "my_plan" | "private") => (
+    // Assigned plans are not drawn by this helper - they get the richer card in the
+    // "Assigned by Your Trainer" section above the tabs.
+    const renderPlanCard = (plan: WorkoutPlan, type: "explore" | "my_plan") => (
         <div key={plan.id} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
             <div>
                 <div className="flex justify-between items-start mb-2">
                     <h3 className="text-xl font-bold text-gray-900 dark:text-white">{plan.name}</h3>
-                    {type === "private" && (
-                        <span className="bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 text-[10px] font-black uppercase px-2 py-1 rounded-full border border-green-200 dark:border-green-800">
-                            Assigned 🟢
-                        </span>
-                    )}
                     {type === "explore" && (
                         <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 text-[10px] font-black uppercase px-2 py-1 rounded-full border border-blue-200 dark:border-blue-800">
                             Public 🔵
@@ -208,6 +180,72 @@ export default function Workouts() {
                 </p>
             </div>
 
+            {/*
+              ASSIGNED BY YOUR TRAINER
+              Sits above the tabs on purpose. What your trainer built specifically for you
+              is the single most important thing on this page, so it should never be hidden
+              behind a tab next to plans you saved yourself.
+            */}
+            {privatePlans.length > 0 && (
+                <div className="mb-8">
+                    <div className="flex items-center gap-2 mb-4">
+                        <span className="text-xl">🎯</span>
+                        <h2 className="text-xl font-black text-gray-900 dark:text-white">Assigned by Your Trainer</h2>
+                        <span className="bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 text-[10px] font-black uppercase px-2 py-1 rounded-full border border-emerald-200 dark:border-emerald-800">
+                            {privatePlans.length} {privatePlans.length === 1 ? "plan" : "plans"}
+                        </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        {privatePlans.map((plan) => (
+                            <div
+                                key={plan.id}
+                                className="relative overflow-hidden rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-gradient-to-br from-emerald-50 via-white to-blue-50 dark:from-emerald-950/40 dark:via-slate-900 dark:to-blue-950/30 p-6 shadow-sm hover:shadow-lg transition-shadow flex flex-col"
+                            >
+                                {/* Accent stripe so the card reads as "special" at a glance */}
+                                <div className="absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b from-emerald-500 to-blue-500"></div>
+
+                                <div className="flex-1 pl-2">
+                                    <p className="text-[10px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1">
+                                        Personal Plan
+                                    </p>
+                                    <h3 className="text-2xl font-black text-gray-900 dark:text-white leading-tight">
+                                        {plan.name}
+                                    </h3>
+                                    {plan.description && (
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1.5">{plan.description}</p>
+                                    )}
+
+                                    {/* Exercise chips: enough of a preview to know what you are walking into */}
+                                    <div className="flex flex-wrap gap-1.5 mt-4">
+                                        {plan.exercises.slice(0, 4).map((ex) => (
+                                            <span
+                                                key={ex.id}
+                                                className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-800/80 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-slate-700"
+                                            >
+                                                {ex.name} · {ex.sets}×{ex.reps}
+                                            </span>
+                                        ))}
+                                        {plan.exercises.length > 4 && (
+                                            <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white/80 dark:bg-slate-800/80 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-slate-700">
+                                                +{plan.exercises.length - 4} more
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={() => setActiveWorkout(plan)}
+                                    className="w-full mt-6 ml-0 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3.5 rounded-xl transition-all shadow-md hover:shadow-lg active:scale-[0.99] touch-manipulation text-base"
+                                >
+                                    Start Workout 🚀
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* TABS NAVIGATION */}
             <div className="flex gap-2 p-1 bg-gray-100 dark:bg-slate-900 rounded-2xl w-full sm:w-fit mb-8 border border-gray-200 dark:border-slate-800 transition-colors">
                 <button
@@ -233,16 +271,20 @@ export default function Workouts() {
             {/* TAB CONTENT: MY PLANS */}
             {activeTab === "my_plans" && (
                 <div>
-                    {privatePlans.length === 0 && savedPlans.length === 0 ? (
+                    {/*
+                      Only plans the member saved themselves. The ones their trainer
+                      assigned have their own section above the tabs, so listing them
+                      here as well would show every assigned plan twice on one screen.
+                    */}
+                    {savedPlans.length === 0 ? (
                         <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-gray-200 dark:border-slate-800 text-center transition-colors">
                             <span className="text-4xl mb-4 block">🏃‍♂️</span>
-                            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No active plans</h3>
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No saved plans</h3>
                             <p className="text-gray-500 dark:text-gray-400 mb-6">You haven't saved any plans yet. Go to Explore or ask your trainer!</p>
                             <button onClick={() => setActiveTab("explore")} className="bg-blue-600 text-white font-bold py-2 px-6 rounded-xl hover:bg-blue-700 transition">Go to Explore</button>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {privatePlans.map(p => renderPlanCard(p, "private"))}
                             {savedPlans.map(p => renderPlanCard(p, "my_plan"))}
                         </div>
                     )}
@@ -277,129 +319,67 @@ export default function Workouts() {
                             </div>
                         ) : (
                             <div className="flex flex-col gap-4">
-                                {history.map(session => (
-                                    <div key={session.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 transition-colors">
-                                        <div className="flex justify-between items-center mb-3">
-                                            <h3 className="font-bold text-gray-900 dark:text-white">
-                                                {new Date(session.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-                                            </h3>
-                                            <span className="text-xs font-bold text-gray-500 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded-full">
-                                                {session.exercise_logs.length} Exercises
-                                            </span>
-                                        </div>
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                                            {session.exercise_logs.map(log => (
-                                                <div key={log.id} className="bg-gray-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-gray-100 dark:border-slate-700/50">
-                                                    <p className="text-xs font-bold text-gray-700 dark:text-gray-300 truncate" title={log.exercise?.name}>
-                                                        {log.exercise?.name || "Unknown"}
-                                                    </p>
-                                                    <p className="text-xs text-blue-600 dark:text-blue-400 font-black mt-0.5">
-                                                        {log.weight_kg ? `${log.weight_kg} kg` : "Bodyweight"}
-                                                    </p>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        {session.notes && (
-                                            <div className="mt-4 pt-3 border-t border-gray-100 dark:border-slate-800 text-sm text-gray-500 dark:text-gray-400 italic">
-                                                "{session.notes}"
+                                {history.map(session => {
+                                    const exercises = groupLogsByExercise(session.exercise_logs);
+
+                                    return (
+                                        <div key={session.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 transition-colors">
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h3 className="font-bold text-gray-900 dark:text-white">
+                                                    {new Date(session.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                                                </h3>
+                                                <span className="text-xs font-bold text-gray-500 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded-full">
+                                                    {exercises.length} {exercises.length === 1 ? "Exercise" : "Exercises"}
+                                                </span>
                                             </div>
-                                        )}
-                                    </div>
-                                ))}
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                                {exercises.map(group => (
+                                                    <div key={group.key} className="bg-gray-50 dark:bg-slate-800/60 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50">
+                                                        <p className="text-xs font-bold text-gray-700 dark:text-gray-300 truncate" title={group.name}>
+                                                            {group.name}
+                                                        </p>
+                                                        <p className="text-xs text-blue-600 dark:text-blue-400 font-black mt-0.5">
+                                                            {group.sets.length} {group.sets.length === 1 ? "set" : "sets"}
+                                                            {group.topWeight !== null ? ` · top ${group.topWeight} kg` : " · bodyweight"}
+                                                        </p>
+
+                                                        {/* The set by set breakdown, which is the whole point of per-set rows */}
+                                                        <div className="flex flex-wrap gap-1 mt-2">
+                                                            {group.sets.map(set => (
+                                                                <span
+                                                                    key={set.id}
+                                                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-400"
+                                                                >
+                                                                    {set.weight_kg !== null ? `${set.weight_kg}×${set.reps_completed}` : `${set.reps_completed} reps`}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            {session.notes && (
+                                                <div className="mt-4 pt-3 border-t border-gray-100 dark:border-slate-800 text-sm text-gray-500 dark:text-gray-400 italic">
+                                                    "{session.notes}"
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
                 </div>
             )}
 
-            {/* --- WORKOUT LOGGING MODAL --- */}
+            {/* --- LIVE WORKOUT MODAL --- */}
+            {/* key= remounts the modal per plan, so the set grid is always rebuilt fresh */}
             {activeWorkout && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div
-                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-                        onClick={() => !isSubmittingLog && setActiveWorkout(null)}
-                    ></div>
-
-                    <div className="relative bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-200 dark:border-slate-800">
-                        <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-900/50">
-                            <div>
-                                <h2 className="text-2xl font-black text-gray-900 dark:text-white">Active Workout</h2>
-                                <p className="text-sm text-blue-600 dark:text-blue-400 font-bold">{activeWorkout.name}</p>
-                            </div>
-                            <button
-                                onClick={() => setActiveWorkout(null)}
-                                disabled={isSubmittingLog}
-                                className="h-10 w-10 bg-gray-200 dark:bg-slate-800 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40 dark:hover:text-red-400 rounded-full flex items-center justify-center transition-colors font-bold text-gray-600 dark:text-gray-400"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div className="p-6 overflow-y-auto flex-1">
-                            <form id="workout-form" onSubmit={(e) => void handleLogWorkout(e)} className="flex flex-col gap-6">
-
-                                {activeWorkout.exercises.map((ex, idx) => (
-                                    <div key={ex.id} className="bg-gray-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-gray-200 dark:border-slate-700 flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
-                                        <div className="flex items-center gap-4">
-                                            <div className="h-10 w-10 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-full flex items-center justify-center font-black">
-                                                {idx + 1}
-                                            </div>
-                                            <div>
-                                                <p className="font-bold text-gray-900 dark:text-white text-lg">{ex.name}</p>
-                                                <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
-                                                    Target: {ex.sets} sets × {ex.reps} reps
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-center gap-2">
-                                            <label className="text-sm font-bold text-gray-600 dark:text-gray-300">Weight (kg):</label>
-                                            {ex.requires_weight ? (
-                                                <input
-                                                    type="number"
-                                                    step="0.5"
-                                                    min="0"
-                                                    placeholder="e.g. 60"
-                                                    value={workoutLog[ex.id] || ""}
-                                                    onChange={(e) => setWorkoutLog({...workoutLog, [ex.id]: e.target.value})}
-                                                    className="w-24 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white p-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center font-bold"
-                                                />
-                                            ) : (
-                                                <div className="w-24 bg-gray-100 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 text-gray-400 dark:text-gray-500 p-2.5 rounded-xl text-center font-bold text-xs flex items-center justify-center select-none uppercase tracking-wider">
-                                                    N/A
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div> // <--- OVO JE FALILO
-                                ))}
-
-                                <div className="mt-2">
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                                        Session Notes (Optional)
-                                    </label>
-                                    <textarea
-                                        rows={3}
-                                        value={workoutNotes}
-                                        onChange={(e) => setWorkoutNotes(e.target.value)}
-                                        placeholder="How did you feel? Hit any PRs?"
-                                        className="w-full bg-gray-50 dark:bg-slate-800/50 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-4 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                                    ></textarea>
-                                </div>
-                            </form>
-                        </div>
-
-                        <div className="p-6 border-t border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-                            <button
-                                type="submit"
-                                form="workout-form"
-                                disabled={isSubmittingLog}
-                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl transition-all shadow-md hover:shadow-lg disabled:opacity-50 text-lg flex justify-center items-center gap-2"
-                            >
-                                {isSubmittingLog ? "Saving..." : "✅ Finish & Save Workout"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <LiveWorkoutModal
+                    key={activeWorkout.id}
+                    plan={activeWorkout}
+                    onClose={() => setActiveWorkout(null)}
+                    onSaved={() => void handleWorkoutSaved()}
+                />
             )}
         </div>
     );
