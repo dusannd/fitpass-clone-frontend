@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { api } from "../../api/axios";
 
@@ -11,50 +12,88 @@ interface Role {
 interface StaffMember {
     id: number;
     email: string;
-    first_name: string;
-    last_name: string;
+    first_name: string | null;
+    last_name: string | null;
     roles: Role[];
 }
 
+// Hire and fire hit different endpoints but carry the same payload, so one
+// mutation handles both and this says which way it is going.
+interface HRAction {
+    action: "hire" | "fire";
+    email: string;
+    roleName: string;
+}
+
+/**
+ * Both name columns are nullable in the database, and `{first} {last}` on an
+ * account that has neither renders as a lone space - a row that looks broken.
+ * The email is always there, so it is the fallback.
+ */
+function displayName(user: StaffMember): string {
+    return `${user.first_name ?? ""} ${user.last_name ?? ""}`.trim() || user.email;
+}
+
 export default function HRPanel() {
+    const queryClient = useQueryClient();
+
     const [email, setEmail] = useState("");
     const [roleName, setRoleName] = useState("trainer");
 
     const [message, setMessage] = useState("");
     const [error, setError] = useState("");
 
-    const [loadingAction, setLoadingAction] = useState<"hire" | "fire" | null>(null);
+    // --- 1. STAFF LIST ---
+    // Asks the backend for staff directly. This used to fetch GET /users/ and
+    // filter in the browser, which quietly broke once the gym passed 50 users:
+    // that endpoint pages at 50, so any staff member outside the first page was
+    // simply absent from the list.
+    const staffQuery = useQuery({
+        queryKey: ["admin", "staff"],
+        queryFn: () => api.get<StaffMember[]>("/admin/hr/staff").then((res) => res.data),
+    });
 
-    // --- NOVO: Stanje za listu zaposlenih ---
-    const [staff, setStaff] = useState<StaffMember[]>([]);
-    const [loadingStaff, setLoadingStaff] = useState(true);
+    const staff = staffQuery.data ?? [];
 
-    // Funkcija koja povlači sve korisnike i filtrira samo zaposlene (one koji imaju neku rolu osim 'member')
-    const fetchStaff = useCallback(async () => {
-        try {
-            setLoadingStaff(true);
-            const res = await api.get("/users/");
+    // --- 2. HIRE / FIRE ---
+    // One mutation for both directions: the endpoints differ only in the verb, so
+    // splitting them would duplicate the banner and error handling twice over.
+    const hrMutation = useMutation({
+        mutationFn: ({ action, email: targetEmail, roleName: targetRole }: HRAction) =>
+            api
+                .post<{ message: string }>(
+                    action === "hire" ? "/admin/hr/hire" : "/admin/hr/fire",
+                    { email: targetEmail, role_name: targetRole }
+                )
+                .then((res) => res.data),
+        onSuccess: async (data, variables) => {
+            setError("");
+            setMessage(data.message);
+            if (variables.action === "hire") setEmail(""); // Praznimo polje samo kad zaposlimo nekog
 
-            // Filtriramo: Zadrži korisnike koji imaju rolu koja NIJE "member"
-            const staffOnly = res.data.filter((u: StaffMember) =>
-                u.roles.some((r) => r.name === "admin" || r.name === "worker" || r.name === "trainer")
-            );
+            await queryClient.invalidateQueries({ queryKey: ["admin", "staff"] });
+            // Hiring and firing change roles, and the sidebar is built from them -
+            // so an admin who promotes themselves needs this shared key refreshed
+            // too, otherwise their own nav stays stale until a reload.
+            await queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+        },
+        onError: (err: unknown) => {
+            setMessage("");
+            if (axios.isAxiosError(err)) {
+                setError(err.response?.data?.detail || "Failed to update this staff member.");
+            } else {
+                setError("An unexpected error occurred.");
+            }
+        },
+    });
 
-            setStaff(staffOnly);
-        } catch (err) {
-            console.error("Failed to load staff list", err);
-        } finally {
-            setLoadingStaff(false);
-        }
-    }, []);
-
-    // Povlačimo listu kad se stranica učita
-    useEffect(() => {
-        void fetchStaff();
-    }, [fetchStaff]);
+    // Only the button that was actually clicked says "Processing...", while both
+    // stay disabled. mutation.variables survives after the call settles, so it has
+    // to be read together with isPending.
+    const pendingAction = hrMutation.isPending ? hrMutation.variables?.action : null;
 
     // Akcija za Hire / Fire
-    const executeAction = async (action: "hire" | "fire") => {
+    const executeAction = (action: "hire" | "fire") => {
         if (!email.trim()) {
             setError("Please enter a valid email address.");
             return;
@@ -62,30 +101,7 @@ export default function HRPanel() {
 
         setMessage("");
         setError("");
-        setLoadingAction(action);
-
-        try {
-            const endpoint = action === "hire" ? "/admin/hr/hire" : "/admin/hr/fire";
-            const response = await api.post(endpoint, {
-                email,
-                role_name: roleName,
-            });
-
-            setMessage(response.data.message);
-            if (action === "hire") setEmail(""); // Praznimo polje samo kad zaposlimo nekog
-
-            // OVO JE KLJUČNO: Odmah osvežavamo listu ispod!
-            await fetchStaff();
-
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || `Failed to ${action} staff member.`);
-            } else {
-                setError("An unexpected error occurred.");
-            }
-        } finally {
-            setLoadingAction(null);
-        }
+        hrMutation.mutate({ action, email, roleName });
     };
 
     return (
@@ -148,20 +164,20 @@ export default function HRPanel() {
                     <div className="flex flex-col sm:flex-row gap-4 pt-2 border-t border-gray-100 dark:border-slate-800 transition-colors">
                         <button
                             type="button"
-                            onClick={() => void executeAction("hire")}
-                            disabled={loadingAction !== null}
+                            onClick={() => executeAction("hire")}
+                            disabled={hrMutation.isPending}
                             className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-sm disabled:opacity-50 flex justify-center items-center"
                         >
-                            {loadingAction === "hire" ? "Processing..." : "Assign Role (Hire)"}
+                            {pendingAction === "hire" ? "Processing..." : "Assign Role (Hire)"}
                         </button>
 
                         <button
                             type="button"
-                            onClick={() => void executeAction("fire")}
-                            disabled={loadingAction !== null}
+                            onClick={() => executeAction("fire")}
+                            disabled={hrMutation.isPending}
                             className="flex-1 bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-200 dark:hover:bg-rose-900/60 font-bold py-3 px-4 rounded-xl transition-all disabled:opacity-50 flex justify-center items-center"
                         >
-                            {loadingAction === "fire" ? "Processing..." : "Revoke Role (Fire)"}
+                            {pendingAction === "fire" ? "Processing..." : "Revoke Role (Fire)"}
                         </button>
                     </div>
                 </div>
@@ -173,8 +189,21 @@ export default function HRPanel() {
                     Current Staff Members
                 </h2>
 
-                {loadingStaff ? (
+                {staffQuery.isPending ? (
                     <div className="text-gray-500 dark:text-gray-400 font-medium">Loading staff list...</div>
+                ) : staffQuery.isError ? (
+                    // The old code only logged this, so a failed request looked
+                    // exactly like a gym with no staff in it.
+                    <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-red-200 dark:border-red-800 text-rose-600 dark:text-rose-400 text-center font-medium transition-colors">
+                        Could not load the staff list.{" "}
+                        <button
+                            type="button"
+                            onClick={() => void staffQuery.refetch()}
+                            className="underline font-bold hover:text-rose-700 dark:hover:text-rose-300"
+                        >
+                            Try again
+                        </button>
+                    </div>
                 ) : staff.length === 0 ? (
                     <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-gray-200 dark:border-slate-800 text-gray-500 text-center transition-colors">
                         No staff members found.
@@ -186,11 +215,11 @@ export default function HRPanel() {
                                 <div className="flex items-center gap-3 mb-4">
                                     {/* AVATAR */}
                                     <div className="h-10 w-10 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-300 rounded-full flex items-center justify-center font-bold text-lg border border-gray-200 dark:border-slate-700">
-                                        {user.first_name?.charAt(0) || "S"}
+                                        {displayName(user).charAt(0).toUpperCase()}
                                     </div>
                                     <div>
                                         <h3 className="font-bold text-gray-900 dark:text-white">
-                                            {user.first_name} {user.last_name}
+                                            {displayName(user)}
                                         </h3>
                                         <p className="text-xs text-gray-500 dark:text-gray-400">
                                             {user.email}
