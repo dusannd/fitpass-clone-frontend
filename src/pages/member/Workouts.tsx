@@ -5,7 +5,9 @@ import { ProgressCard } from "../../components/ProgressCard";
 import LiveWorkoutModal from "../../components/LiveWorkoutModal";
 import SessionDetailModal from "../../components/SessionDetailModal";
 import Avatar from "../../components/Avatar";
+import MyTrainerChip from "../../components/MyTrainerChip";
 import { parseGoals } from "../../utils/profile";
+import type { CoachingLink } from "../../utils/coaching";
 import type { UserProfile } from "../../components/Layout";
 import { groupLogsByExercise, type WorkoutPlan, type WorkoutSession } from "../../utils/workout";
 
@@ -68,6 +70,9 @@ export default function Workouts() {
     const [privatePlans, setPrivatePlans] = useState<WorkoutPlan[]>([]);
     const [history, setHistory] = useState<WorkoutSession[]>([]);
 
+    // Who is coaching this member, for the chip in the page header.
+    const [coachingLinks, setCoachingLinks] = useState<CoachingLink[]>([]);
+
     // --- EXPLORE (LAZY) ---
     // We hold the trainer list, and each trainer's plans only once somebody asks for
     // them. A key present in trainerPlans means "already fetched", which is what stops
@@ -97,18 +102,22 @@ export default function Workouts() {
     const fetchAllData = useCallback(async () => {
         setLoading(true);
         try {
-            // Four independent reads, so they travel together instead of in a queue.
-            const [histRes, savedRes, privateRes, trainersRes] = await Promise.all([
+            // Five independent reads, so they travel together instead of in a queue.
+            // The coaching one only feeds the header chip, so it fails soft - a member
+            // with no trainer must still get their whole Workout Center.
+            const [histRes, savedRes, privateRes, trainersRes, coachingRes] = await Promise.all([
                 api.get<WorkoutSession[]>("/workouts/history"),
                 api.get<WorkoutPlan[]>("/workouts/my-plans"),
                 api.get<WorkoutPlan[]>("/workouts/my-private-plans"),
                 api.get<Trainer[]>("/workouts/trainers"),
+                api.get<CoachingLink[]>("/coaching/my-trainers").catch(() => null),
             ]);
 
             setHistory(histRes.data);
             setSavedPlans(savedRes.data);
             setPrivatePlans(privateRes.data);
             setTrainers(trainersRes.data);
+            if (coachingRes) setCoachingLinks(coachingRes.data);
         } catch (err) {
             console.error("Failed to load workout data", err);
         } finally {
@@ -315,13 +324,19 @@ export default function Workouts() {
 
     return (
         <div className="max-w-6xl mx-auto flex flex-col h-full">
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold text-gray-800 dark:text-white transition-colors duration-200">
-                    Workout Center
-                </h1>
-                <p className="text-gray-600 dark:text-gray-400 mt-1 transition-colors duration-200">
-                    Find plans, crush your sets, and track your progress.
-                </p>
+            {/* HEADER: the title, and who is coaching you, on one line */}
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white transition-colors duration-200">
+                        Workout Center
+                    </h1>
+                    <p className="text-gray-600 dark:text-gray-400 mt-1 transition-colors duration-200">
+                        Find plans, crush your sets, and track your progress.
+                    </p>
+                </div>
+
+                {/* Above the tabs, so it is there on Explore and History too */}
+                <MyTrainerChip links={coachingLinks} showEmptyState />
             </div>
 
             {/*

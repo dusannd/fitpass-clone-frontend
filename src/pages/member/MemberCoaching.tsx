@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { api } from "../../api/axios.ts";
 import Avatar from "../../components/Avatar";
+import MyTrainerChip from "../../components/MyTrainerChip";
 import { parseGoals } from "../../utils/profile";
+import type { CoachingLink } from "../../utils/coaching";
 import type { UserProfile } from "../../components/Layout";
 
 interface Trainer {
@@ -13,18 +15,12 @@ interface Trainer {
     profile: UserProfile | null;
 }
 
-interface MyTrainerLink {
-    trainer_id: number;
-    status: string;
-}
-
 export default function MemberCoaching() {
     const [trainers, setTrainers] = useState<Trainer[]>([]);
 
-    // Čuva ID-jeve trenera kojima je ZAHTEV POSLAT
-    const [pendingIds, setPendingIds] = useState<number[]>([]);
-    // Čuva ID-jeve trenera koji su PRIHVATILI zahtev
-    const [acceptedIds, setAcceptedIds] = useState<number[]>([]);
+    // The coaching links themselves, so the header chip can name the trainer instead of
+    // us keeping only their ids and asking the API for the same thing twice.
+    const [links, setLinks] = useState<CoachingLink[]>([]);
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -36,20 +32,12 @@ export default function MemberCoaching() {
             try {
                 // Odjednom vučemo sve trenere i status naših zahteva
                 const [trainersRes, myLinksRes] = await Promise.all([
-                    api.get("/workouts/trainers"),
-                    api.get("/coaching/my-trainers") // <-- ONA NOVA BACKEND RUTA!
+                    api.get<Trainer[]>("/workouts/trainers"),
+                    api.get<CoachingLink[]>("/coaching/my-trainers") // <-- ONA NOVA BACKEND RUTA!
                 ]);
 
                 setTrainers(trainersRes.data);
-
-                // Sortiramo ID-jeve na osnovu toga da li je zahtev na čekanju ili prihvaćen
-                const links: MyTrainerLink[] = myLinksRes.data;
-
-                const pending = links.filter(l => l.status === "PENDING").map(l => l.trainer_id);
-                const accepted = links.filter(l => l.status === "ACCEPTED").map(l => l.trainer_id);
-
-                setPendingIds(pending);
-                setAcceptedIds(accepted);
+                setLinks(myLinksRes.data);
 
             } catch (err) {
                 setError("Failed to load trainers.");
@@ -62,6 +50,39 @@ export default function MemberCoaching() {
         void fetchInitialData();
     }, []);
 
+    /**
+     * Marks a trainer as pending locally, so the card and the header chip both update the
+     * moment the request goes through instead of after a refetch. The link gets a negative
+     * id because it is a placeholder: the real row arrives on the next page load.
+     */
+    const addPendingLink = (trainerId: number) => {
+        setLinks((prev) => {
+            if (prev.some((l) => l.trainer_id === trainerId)) return prev;
+
+            const trainer = trainers.find((t) => t.id === trainerId);
+
+            return [...prev, {
+                id: -trainerId,
+                trainer_id: trainerId,
+                // Not known on this page and nothing reads it, so it stays at 0 until the
+                // server's own copy of this link replaces the placeholder.
+                client_id: 0,
+                status: "PENDING",
+                created_at: new Date().toISOString(),
+                trainer: trainer
+                    ? {
+                        id: trainer.id,
+                        first_name: trainer.first_name,
+                        last_name: trainer.last_name,
+                        email: trainer.email,
+                        profile: trainer.profile,
+                    }
+                    : null,
+                client: null,
+            }];
+        });
+    };
+
     const handleSendRequest = async (trainerId: number, trainerName: string) => {
         setError("");
         setSuccessMsg("");
@@ -72,13 +93,13 @@ export default function MemberCoaching() {
             setSuccessMsg(`Coaching request sent successfully to ${trainerName}!`);
 
             // Ubaci ID u PENDING niz čim prođe
-            setPendingIds((prev) => [...prev, trainerId]);
+            addPendingLink(trainerId);
 
         } catch (err: unknown) {
             if (axios.isAxiosError(err)) {
                 const errorMsg = err.response?.data?.detail || "Failed to send request.";
                 if (errorMsg.includes("already exists")) {
-                    setPendingIds((prev) => [...prev, trainerId]);
+                    addPendingLink(trainerId);
                     setError(`You already have a pending or active request with ${trainerName}.`);
                 } else {
                     setError(errorMsg);
@@ -93,15 +114,25 @@ export default function MemberCoaching() {
 
     if (loading) return <div className="p-6 text-gray-500 dark:text-gray-400 font-bold">Loading trainers...</div>;
 
+    // Derived from the links themselves, so there is a single source of truth for who is
+    // pending and who accepted.
+    const pendingIds = links.filter(l => l.status === "PENDING").map(l => l.trainer_id);
+    const acceptedIds = links.filter(l => l.status === "ACCEPTED").map(l => l.trainer_id);
+
     return (
         <div className="max-w-5xl mx-auto">
-            <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-800 dark:text-white transition-colors duration-200">
-                    Find a Personal Trainer
-                </h1>
-                <p className="text-gray-600 dark:text-gray-400 mt-2 transition-colors duration-200">
-                    Browse our certified trainers and request 1-on-1 coaching.
-                </p>
+            <div className="mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white transition-colors duration-200">
+                        Find a Personal Trainer
+                    </h1>
+                    <p className="text-gray-600 dark:text-gray-400 mt-2 transition-colors duration-200">
+                        Browse our certified trainers and request 1-on-1 coaching.
+                    </p>
+                </div>
+
+                {/* No empty state here - this page IS the "go find one" call to action */}
+                <MyTrainerChip links={links} />
             </div>
 
             {successMsg && (
