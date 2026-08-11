@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import axios from "axios";
 import { api } from "../../api/axios";
 
+// --- INTERFACES ---
 interface StatusResponse {
     user_id: number;
     full_name: string;
@@ -20,113 +22,357 @@ interface InsideUser {
     entered_at: string;
 }
 
+// What the autocomplete dropdown needs, and nothing heavier
+interface SearchResult {
+    user_id: number;
+    full_name: string;
+    email: string;
+}
+
+interface EntryLogEntry {
+    id: number;
+    user_id: number;
+    full_name: string;
+    action_type: string;
+    access_granted: boolean;
+    reason: string | null;
+    timestamp: string;
+}
+
+// Both paginated endpoints answer with the same envelope, so the page can share
+// one type and one set of Prev/Next controls.
+interface Paginated<T> {
+    total: number;
+    items: T[];
+}
+
+// The attendance page carries the moment it arrived, stamped on in the query
+// function. It has to travel WITH the data rather than be read off the query,
+// because insideQuery.dataUpdatedAt describes the key being fetched - which is 0
+// for as long as placeholderData keeps the previous page on screen. Reading it
+// there made every row flash "0m inside" on each Prev/Next.
+type InsidePage = Paginated<InsideUser> & { fetchedAt: number };
+
+// --- CONSTANTS ---
+const INSIDE_PAGE_SIZE = 8;
+const LOG_PAGE_SIZE = 10;
+const MIN_SEARCH_LENGTH = 2; // Mirrors the backend's Query(min_length=2)
+
+/**
+ * Delays a value until the user stops typing.
+ *
+ * Without this, every keystroke would be a request to /worker/search. It is not
+ * exported on purpose: a module that exports a component should only export
+ * components, otherwise Vite's fast refresh gives up on the whole file.
+ */
+function useDebouncedValue(value: string, delay = 300): string {
+    const [debounced, setDebounced] = useState(value);
+
+    useEffect(() => {
+        const timer = setTimeout(() => setDebounced(value), delay);
+        return () => clearTimeout(timer);
+    }, [value, delay]);
+
+    return debounced;
+}
+
+/** Turns "42 minutes" into "42m" and "95 minutes" into "1h 35m". */
+function formatDuration(minutes: number): string {
+    if (minutes < 60) return `${minutes}m`;
+    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 export default function WorkerDashboard() {
-    const [userId, setUserId] = useState<string>("");
+    const queryClient = useQueryClient();
+
+    // --- SEARCH STATE ---
+    const [searchTerm, setSearchTerm] = useState("");
+    const debouncedTerm = useDebouncedValue(searchTerm);
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const searchBoxRef = useRef<HTMLDivElement>(null);
+
+    // The member the worker picked. Held as an id rather than parsed back out of
+    // the text box, so the override button can never fire at the wrong person.
+    const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+
+    // --- CHECK / OVERRIDE STATE ---
+    // Only the banner text and the location live in useState now - the status card
+    // itself comes straight off the mutation below.
     const [locationId, setLocationId] = useState<number>(3);
-    const [statusData, setStatusData] = useState<StatusResponse | null>(null);
-
-    const [loadingCheck, setLoadingCheck] = useState(false);
-    const [loadingOverride, setLoadingHoverride] = useState(false);
-
     const [error, setError] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
 
-    // --- CURRENTLY INSIDE STATE ---
-    const [insideUsers, setInsideUsers] = useState<InsideUser[]>([]);
-    const [loadingInside, setLoadingInside] = useState(true);
+    // --- PAGINATION STATE ---
+    const [insidePage, setInsidePage] = useState(0);
+    const [logPage, setLogPage] = useState(0);
 
-    const fetchInsideUsers = useCallback(async () => {
-        try {
-            const res = await api.get("/worker/currently-inside");
-            setInsideUsers(res.data);
-        } catch (err) {
-            console.error("Failed to fetch inside users", err);
-        } finally {
-            setLoadingInside(false);
-        }
-    }, []);
+    // --- 1. SEARCH QUERY ---
+    // Only runs once the debounced term is long enough for the backend to accept,
+    // and the result is kept warm for half a minute so backspacing is free.
+    const searchQuery = useQuery({
+        queryKey: ["worker", "search", debouncedTerm],
+        queryFn: () =>
+            api
+                .get<SearchResult[]>(`/worker/search?query=${encodeURIComponent(debouncedTerm.trim())}`)
+                .then((res) => res.data),
+        enabled: debouncedTerm.trim().length >= MIN_SEARCH_LENGTH,
+        staleTime: 30_000,
+    });
 
+    const results = searchQuery.data ?? [];
+
+    // True only when the results on screen belong to what is currently typed.
+    // Without this, hitting Enter mid-debounce would pick the top hit of the
+    // PREVIOUS term - which at a turnstile means opening the door for the wrong
+    // person.
+    const areResultsCurrent = debouncedTerm === searchTerm && !searchQuery.isFetching;
+
+    // Close the dropdown on a click outside or on Escape, the same way the avatar
+    // menu in Layout.tsx does it.
     useEffect(() => {
-        void fetchInsideUsers();
-        // Refresh table every 10 seconds to keep live durations accurate
-        const interval = setInterval(fetchInsideUsers, 10000);
-        return () => clearInterval(interval);
-    }, [fetchInsideUsers]);
+        if (!isDropdownOpen) return;
 
-    const handleForceCheckout = async (targetId: number, name: string) => {
-        if (!confirm(`Are you sure you want to force checkout ${name}?`)) return;
-        try {
-            await api.post(`/worker/force-checkout/${targetId}`);
-            alert(`${name} checked out successfully.`);
-            void fetchInsideUsers(); // Refresh table immediately
-        } catch {
-            alert("Failed to force checkout.");
-        }
+        const handleClickOutside = (e: MouseEvent) => {
+            if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
+                setIsDropdownOpen(false);
+            }
+        };
+        const handleEscape = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setIsDropdownOpen(false);
+        };
+
+        document.addEventListener("mousedown", handleClickOutside);
+        document.addEventListener("keydown", handleEscape);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            document.removeEventListener("keydown", handleEscape);
+        };
+    }, [isDropdownOpen]);
+
+    // --- 2. LIVE ATTENDANCE QUERY ---
+    // No refetchInterval on purpose. This used to poll every 10 seconds, which
+    // ran a GROUP BY over the whole entry_logs table all day long for a screen
+    // nobody was necessarily looking at. It now refreshes on demand, and by
+    // itself only after the worker's own actions.
+    const insideQuery = useQuery({
+        queryKey: ["worker", "inside", insidePage],
+        queryFn: (): Promise<InsidePage> =>
+            api
+                .get<Paginated<InsideUser>>(
+                    `/worker/currently-inside?skip=${insidePage * INSIDE_PAGE_SIZE}&limit=${INSIDE_PAGE_SIZE}`
+                )
+                // Stamped here rather than during render: a clock read while
+                // rendering makes the component impure.
+                .then((res) => ({ ...res.data, fetchedAt: Date.now() })),
+        placeholderData: keepPreviousData, // Keeps the old page on screen while the next one loads
+    });
+
+    const insideTotal = insideQuery.data?.total ?? 0;
+    const insideUsers = insideQuery.data?.items ?? [];
+    const insidePageCount = Math.max(1, Math.ceil(insideTotal / INSIDE_PAGE_SIZE));
+
+    // --- 3. ACTIVITY LOG QUERY ---
+    const logsQuery = useQuery({
+        queryKey: ["worker", "logs", logPage],
+        queryFn: () =>
+            api
+                .get<Paginated<EntryLogEntry>>(
+                    `/worker/logs?skip=${logPage * LOG_PAGE_SIZE}&limit=${LOG_PAGE_SIZE}`
+                )
+                .then((res) => res.data),
+        placeholderData: keepPreviousData,
+    });
+
+    const logTotal = logsQuery.data?.total ?? 0;
+    const logs = logsQuery.data?.items ?? [];
+    const logPageCount = Math.max(1, Math.ceil(logTotal / LOG_PAGE_SIZE));
+
+    /**
+     * Both lists jump back to page one after a worker action, because the row
+     * they just created belongs at the top and they would otherwise be staring
+     * at a stale page 4.
+     */
+    const refreshAfterAction = async () => {
+        setInsidePage(0);
+        setLogPage(0);
+        await queryClient.invalidateQueries({ queryKey: ["worker"] });
     };
 
-    const handleCheckStatus = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError("");
-        setSuccessMsg("");
-        setStatusData(null);
-        if (!userId) return;
-        setLoadingCheck(true);
-        try {
-            const res = await api.get(`/worker/user/${userId}/status`);
-            setStatusData(res.data as StatusResponse);
-        } catch (err: unknown) {
+    // --- 4. STATUS CHECK ---
+    // A mutation rather than a query even though it is a GET: a door check has to
+    // hit the server every single time it is asked for. Behind a query key, a
+    // worker re-checking the same member would be answered from the cache, and a
+    // subscription that expired in the meantime would still read as active.
+    const statusMutation = useMutation({
+        mutationFn: (targetId: number) =>
+            api.get<StatusResponse>(`/worker/user/${targetId}/status`).then((res) => res.data),
+        onSuccess: () => setError(""),
+        onError: (err: unknown) => {
             if (axios.isAxiosError(err)) setError(err.response?.data?.detail || "User not found.");
             else setError("An error occurred.");
-        } finally {
-            setLoadingCheck(false);
-        }
+        },
+    });
+
+    const statusData = statusMutation.data ?? null;
+
+    const checkStatus = (targetId: number) => {
+        setError("");
+        setSuccessMsg("");
+        statusMutation.reset(); // Clears the previous member's card before the new one lands
+        setSelectedUserId(targetId);
+        setIsDropdownOpen(false);
+        statusMutation.mutate(targetId);
     };
 
-    const handleManualOverride = async () => {
-        if (!userId) return;
-        setLoadingHoverride(true);
-        try {
-            const res = await api.post(`/worker/manual-entry/${userId}?location_id=${locationId}`);
-            setSuccessMsg(res.data.message || "Door opened successfully!");
-            void fetchInsideUsers(); // Refresh attendance list immediately after manual override
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) setError(err.response?.data?.detail || "Failed to open door.");
-        } finally {
-            setLoadingHoverride(false);
-        }
+    const handleSelectResult = (result: SearchResult) => {
+        setSearchTerm(result.full_name);
+        checkStatus(result.user_id);
     };
+
+    // Enter picks the top hit, so a worker who typed an exact name never has to
+    // move their hand to the mouse.
+    const handleSearchSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (areResultsCurrent && results.length > 0) handleSelectResult(results[0]);
+    };
+
+    // --- 5. MUTATIONS ---
+    const overrideMutation = useMutation({
+        mutationFn: (targetId: number) =>
+            api
+                .post<{ message?: string }>(`/worker/manual-entry/${targetId}?location_id=${locationId}`)
+                .then((res) => res.data),
+        onSuccess: async (data) => {
+            setError("");
+            setSuccessMsg(data.message || "Door opened successfully!");
+            await refreshAfterAction();
+        },
+        onError: (err: unknown) => {
+            setSuccessMsg("");
+            if (axios.isAxiosError(err)) setError(err.response?.data?.detail || "Failed to open door.");
+            else setError("Failed to open door.");
+        },
+    });
+
+    // The name travels with the mutation so the confirmation message names the
+    // right person even though the list is about to be invalidated underneath it.
+    const checkoutMutation = useMutation({
+        mutationFn: ({ userId }: { userId: number; name: string }) =>
+            api.post(`/worker/force-checkout/${userId}`),
+        onSuccess: async (_data, variables) => {
+            setError("");
+            setSuccessMsg(`${variables.name} was checked out.`);
+            await refreshAfterAction();
+        },
+        onError: () => {
+            setSuccessMsg("");
+            setError("Failed to force checkout.");
+        },
+    });
+
+    const handleForceCheckout = (userId: number, name: string) => {
+        if (!confirm(`Are you sure you want to force checkout ${name}?`)) return;
+        checkoutMutation.mutate({ userId, name });
+    };
+
+    // Durations are measured against the moment the data actually arrived rather
+    // than against a live clock. Now that nothing polls, "as of the last refresh"
+    // is also the honest reading. The 0 fallback never reaches the screen: with no
+    // data there are no rows to map over, so nothing ever divides by it.
+    const insideFetchedAt = insideQuery.data?.fetchedAt ?? 0;
+
+    // Shared button styling for the four Prev/Next controls
+    const pagerButton =
+        "px-3 py-1.5 rounded-lg text-xs font-bold border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-gray-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-gray-200 dark:disabled:hover:border-slate-700 disabled:hover:text-gray-700 dark:disabled:hover:text-gray-300";
 
     return (
         <div className="max-w-6xl mx-auto flex flex-col gap-8">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
-                {/* --- LEFT PANEL: MANUAL CHECK & OVERRIDE --- */}
+                {/* --- LEFT PANEL: MEMBER LOOKUP & OVERRIDE --- */}
                 <div className="flex flex-col gap-6">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                         <div>
-                            <h1 className="text-3xl font-bold text-gray-800 dark:text-white">Desk Worker Panel</h1>
+                            <h1 className="text-3xl font-black text-gray-800 dark:text-white">Desk Worker Panel</h1>
                             <p className="text-gray-600 dark:text-gray-400 mt-1">Verify subscriptions and perform overrides.</p>
                         </div>
                     </div>
 
                     <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-slate-800">
-                        <form onSubmit={(e) => void handleCheckStatus(e)} className="flex flex-col gap-4">
+                        <form onSubmit={handleSearchSubmit} className="flex flex-col gap-4">
                             <div className="flex justify-between items-center mb-1">
-                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300">Enter Member ID</label>
+                                <label htmlFor="member-search" className="block text-sm font-bold text-gray-700 dark:text-gray-300">
+                                    Find a member
+                                </label>
                                 <div className="flex items-center gap-2">
                                     <span className="text-xs font-bold text-gray-500">Location ID:</span>
-                                    <input type="number" value={locationId} onChange={(e) => setLocationId(parseInt(e.target.value) || 1)} className="w-12 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-center rounded text-xs p-1"/>
+                                    <input
+                                        type="number"
+                                        aria-label="Location ID"
+                                        value={locationId}
+                                        onChange={(e) => setLocationId(parseInt(e.target.value) || 1)}
+                                        className="w-12 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white text-center rounded text-xs p-1"
+                                    />
                                 </div>
                             </div>
 
-                            <div className="flex gap-4">
-                                <input type="number" value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="e.g. 105" required className="flex-1 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 font-semibold" />
-                                <button type="submit" disabled={loadingCheck} className="bg-blue-600 text-white font-bold px-6 py-3 rounded-xl hover:bg-blue-700 transition shadow-sm">{loadingCheck ? "Checking..." : "Check"}</button>
+                            {/* The dropdown is positioned against this wrapper, and the
+                                wrapper is also what "click outside" is measured from. */}
+                            <div ref={searchBoxRef} className="relative">
+                                <div className="flex gap-4">
+                                    <input
+                                        id="member-search"
+                                        type="text"
+                                        autoComplete="off"
+                                        value={searchTerm}
+                                        onChange={(e) => {
+                                            setSearchTerm(e.target.value);
+                                            setIsDropdownOpen(true);
+                                        }}
+                                        onFocus={() => setIsDropdownOpen(true)}
+                                        placeholder="Name or email, e.g. Ana or ana@mail.com"
+                                        className="flex-1 min-w-0 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 font-semibold"
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={statusMutation.isPending || !areResultsCurrent || results.length === 0}
+                                        className="bg-blue-600 text-white font-bold px-6 py-3 rounded-xl hover:bg-blue-700 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {statusMutation.isPending ? "Checking..." : "Check"}
+                                    </button>
+                                </div>
+
+                                {isDropdownOpen && debouncedTerm.trim().length >= MIN_SEARCH_LENGTH && (
+                                    <div className="absolute z-20 mt-2 w-full max-h-72 overflow-y-auto rounded-2xl border border-gray-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl shadow-2xl">
+                                        {/* isPending covers the very first lookup, isFetching every
+                                            later one - together they stop "No members match" from
+                                            flashing while the request is still in the air. */}
+                                        {searchQuery.isPending || !areResultsCurrent ? (
+                                            <p className="p-4 text-sm font-bold text-gray-500">Searching...</p>
+                                        ) : searchQuery.isError ? (
+                                            <p className="p-4 text-sm font-bold text-rose-600 dark:text-rose-400">Search failed. Try again.</p>
+                                        ) : results.length === 0 ? (
+                                            <p className="p-4 text-sm font-bold text-gray-500">No members match "{debouncedTerm.trim()}".</p>
+                                        ) : (
+                                            results.map((result) => (
+                                                <button
+                                                    key={result.user_id}
+                                                    type="button"
+                                                    onClick={() => handleSelectResult(result)}
+                                                    className="w-full text-left px-4 py-3 hover:bg-blue-50 dark:hover:bg-slate-800 transition border-b border-gray-100 dark:border-slate-800 last:border-b-0"
+                                                >
+                                                    <span className="block font-bold text-sm text-gray-900 dark:text-white">{result.full_name}</span>
+                                                    <span className="block text-xs text-gray-500">{result.email} · ID {result.user_id}</span>
+                                                </button>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </form>
 
-                        {error && <div className="bg-red-100 text-red-700 p-4 rounded-xl mt-6 font-bold text-sm border border-red-200">{error}</div>}
-                        {successMsg && <div className="bg-green-100 text-green-700 p-4 rounded-xl mt-6 font-bold text-sm border border-green-200">{successMsg}</div>}
+                        {error && <div className="bg-red-100 dark:bg-rose-950/40 text-red-700 dark:text-rose-300 p-4 rounded-xl mt-6 font-bold text-sm border border-red-200 dark:border-rose-900/60">{error}</div>}
+                        {successMsg && <div className="bg-green-100 dark:bg-emerald-950/40 text-green-700 dark:text-emerald-300 p-4 rounded-xl mt-6 font-bold text-sm border border-green-200 dark:border-emerald-900/60">{successMsg}</div>}
 
                         {statusData && (
                             <div className="mt-8 border-t border-gray-100 dark:border-slate-800 pt-6 flex flex-col gap-6">
@@ -142,8 +388,12 @@ export default function WorkerDashboard() {
                                         <h2 className="text-2xl font-black">{statusData.full_name}</h2>
                                         <p className="text-sm opacity-80">{statusData.email}</p>
                                     </div>
-                                    <button onClick={() => void handleManualOverride()} disabled={loadingOverride} className="w-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold px-6 py-3 rounded-xl hover:bg-black transition shadow-md">
-                                        {loadingOverride ? "Opening..." : "🔓 Manual Door Override"}
+                                    <button
+                                        onClick={() => selectedUserId !== null && overrideMutation.mutate(selectedUserId)}
+                                        disabled={overrideMutation.isPending || selectedUserId === null}
+                                        className="w-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold px-6 py-3 rounded-xl hover:bg-black dark:hover:bg-white transition shadow-md disabled:opacity-60"
+                                    >
+                                        {overrideMutation.isPending ? "Opening..." : "🔓 Manual Door Override"}
                                     </button>
                                 </div>
                             </div>
@@ -153,19 +403,31 @@ export default function WorkerDashboard() {
 
                 {/* --- RIGHT PANEL: CURRENTLY INSIDE LIST --- */}
                 <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 flex flex-col h-[500px]">
-                    <div className="p-6 border-b border-gray-200 dark:border-slate-800 flex justify-between items-center">
+                    <div className="p-6 border-b border-gray-200 dark:border-slate-800 flex justify-between items-center gap-4">
                         <div>
                             <h2 className="text-xl font-bold text-gray-800 dark:text-white">Live Attendance</h2>
                             <p className="text-xs text-gray-500">Members currently inside the gym.</p>
                         </div>
-                        <span className="bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400 font-black px-3 py-1 rounded-full text-sm">
-                            {insideUsers.length} Active
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                            <button
+                                onClick={() => void insideQuery.refetch()}
+                                disabled={insideQuery.isFetching}
+                                title="Refresh the attendance list"
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 transition disabled:opacity-50"
+                            >
+                                {insideQuery.isFetching ? "⏳" : "🔄"} Refresh
+                            </button>
+                            <span className="bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400 font-black px-3 py-1 rounded-full text-sm">
+                                {insideTotal} Active
+                            </span>
+                        </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4">
-                        {loadingInside ? (
+                        {insideQuery.isPending ? (
                             <p className="text-gray-500 text-center mt-10 font-bold">Loading live data...</p>
+                        ) : insideQuery.isError ? (
+                            <p className="text-rose-600 dark:text-rose-400 text-center mt-10 font-bold">Could not load attendance.</p>
                         ) : insideUsers.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-full text-gray-400">
                                 <span className="text-4xl mb-2">👻</span>
@@ -174,36 +436,154 @@ export default function WorkerDashboard() {
                         ) : (
                             <div className="flex flex-col gap-3">
                                 {insideUsers.map((user) => {
-                                    // Calculate time spent inside prior to render
-                                    const diff = Date.now() - new Date(user.entered_at).getTime();
-                                    const mins = Math.floor(diff / 60000);
+                                    // Time spent inside, measured from the last refresh
+                                    const diff = insideFetchedAt - new Date(user.entered_at).getTime();
+                                    const mins = Math.max(0, Math.floor(diff / 60000));
 
                                     return (
-                                        <div key={user.user_id} className="bg-gray-50 dark:bg-slate-800/50 p-4 rounded-xl border border-gray-200 dark:border-slate-700 flex justify-between items-center group transition hover:border-blue-300">
-                                            <div>
-                                                <h3 className="font-bold text-sm text-gray-900 dark:text-white">{user.full_name}</h3>
+                                        <div key={user.user_id} className="bg-gray-50 dark:bg-slate-800/50 p-4 rounded-xl border border-gray-200 dark:border-slate-700 flex justify-between items-center gap-3 group transition hover:border-blue-300">
+                                            <div className="min-w-0">
+                                                <h3 className="font-bold text-sm text-gray-900 dark:text-white truncate">{user.full_name}</h3>
                                                 <div className="flex items-center gap-2 mt-1">
                                                     <span className="text-xs text-gray-500">ID: {user.user_id}</span>
                                                     <span className="h-1 w-1 bg-gray-300 rounded-full"></span>
-                                                    <span className={`text-xs font-bold ${mins > 120 ? 'text-red-500' : 'text-emerald-500'}`}>
-                                                        {mins > 60 ? `${Math.floor(mins/60)}h ${mins%60}m` : `${mins}m`} inside
+                                                    <span className={`text-xs font-bold ${mins > 120 ? "text-red-500" : "text-emerald-500"}`}>
+                                                        {formatDuration(mins)} inside
                                                     </span>
                                                 </div>
                                             </div>
                                             <button
-                                                onClick={() => void handleForceCheckout(user.user_id, user.full_name)}
-                                                className="opacity-0 group-hover:opacity-100 transition bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs font-bold py-2 px-3 rounded-lg"
+                                                onClick={() => handleForceCheckout(user.user_id, user.full_name)}
+                                                disabled={checkoutMutation.isPending}
+                                                className="shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition bg-rose-100 dark:bg-rose-900/40 hover:bg-rose-200 dark:hover:bg-rose-900/70 text-rose-700 dark:text-rose-300 text-xs font-bold py-2 px-3 rounded-lg disabled:opacity-40"
                                             >
                                                 Force Exit
                                             </button>
                                         </div>
-                                    )
+                                    );
                                 })}
                             </div>
                         )}
                     </div>
+
+                    {/* Pager stays mounted so the panel height never jumps */}
+                    <div className="p-4 border-t border-gray-200 dark:border-slate-800 flex items-center justify-between">
+                        <button
+                            onClick={() => setInsidePage((p) => Math.max(0, p - 1))}
+                            disabled={insidePage === 0 || insideQuery.isFetching}
+                            className={pagerButton}
+                        >
+                            ← Prev
+                        </button>
+                        <span className="text-xs font-bold text-gray-500">
+                            Page {insidePage + 1} of {insidePageCount}
+                        </span>
+                        <button
+                            onClick={() => setInsidePage((p) => p + 1)}
+                            disabled={insidePage + 1 >= insidePageCount || insideQuery.isFetching}
+                            className={pagerButton}
+                        >
+                            Next →
+                        </button>
+                    </div>
                 </div>
 
+            </div>
+
+            {/* --- BOTTOM PANEL: ACTIVITY LOG --- */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 flex flex-col">
+                <div className="p-6 border-b border-gray-200 dark:border-slate-800 flex justify-between items-center gap-4">
+                    <div>
+                        <h2 className="text-xl font-bold text-gray-800 dark:text-white">Activity Log</h2>
+                        <p className="text-xs text-gray-500">Every entry, exit and denied scan, newest first.</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                        <button
+                            onClick={() => void logsQuery.refetch()}
+                            disabled={logsQuery.isFetching}
+                            title="Refresh the activity log"
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 transition disabled:opacity-50"
+                        >
+                            {logsQuery.isFetching ? "⏳" : "🔄"} Refresh
+                        </button>
+                        <span className="bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 font-black px-3 py-1 rounded-full text-sm">
+                            {logTotal} Total
+                        </span>
+                    </div>
+                </div>
+
+                <div className="p-4">
+                    {logsQuery.isPending ? (
+                        <p className="text-gray-500 text-center py-10 font-bold">Loading activity...</p>
+                    ) : logsQuery.isError ? (
+                        <p className="text-rose-600 dark:text-rose-400 text-center py-10 font-bold">Could not load the activity log.</p>
+                    ) : logs.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-10 text-gray-400">
+                            <span className="text-4xl mb-2">🗒️</span>
+                            <p>Nothing has been scanned yet.</p>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-3">
+                            {logs.map((log) => (
+                                <div
+                                    key={log.id}
+                                    className="bg-gray-50 dark:bg-slate-800/50 p-4 rounded-xl border border-gray-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                                >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        {/* ENTRY and EXIT read as directions, so they get arrows rather than colour alone */}
+                                        <span className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
+                                            log.action_type === "EXIT"
+                                                ? "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+                                                : "bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300"
+                                        }`}>
+                                            {log.action_type === "EXIT" ? "↩ Exit" : "↪ Entry"}
+                                        </span>
+                                        <div className="min-w-0">
+                                            <h3 className="font-bold text-sm text-gray-900 dark:text-white truncate">{log.full_name}</h3>
+                                            <p className="text-xs text-gray-500 truncate">
+                                                ID: {log.user_id}
+                                                {log.reason ? ` · ${log.reason}` : ""}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-3 shrink-0">
+                                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
+                                            log.access_granted
+                                                ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+                                                : "bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300"
+                                        }`}>
+                                            {log.access_granted ? "Granted" : "Denied"}
+                                        </span>
+                                        <span className="text-xs font-semibold text-gray-500 whitespace-nowrap">
+                                            {new Date(log.timestamp).toLocaleString()}
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-4 border-t border-gray-200 dark:border-slate-800 flex items-center justify-between">
+                    <button
+                        onClick={() => setLogPage((p) => Math.max(0, p - 1))}
+                        disabled={logPage === 0 || logsQuery.isFetching}
+                        className={pagerButton}
+                    >
+                        ← Prev
+                    </button>
+                    <span className="text-xs font-bold text-gray-500">
+                        Page {logPage + 1} of {logPageCount}
+                    </span>
+                    <button
+                        onClick={() => setLogPage((p) => p + 1)}
+                        disabled={logPage + 1 >= logPageCount || logsQuery.isFetching}
+                        className={pagerButton}
+                    >
+                        Next →
+                    </button>
+                </div>
             </div>
         </div>
     );
