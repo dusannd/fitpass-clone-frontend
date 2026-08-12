@@ -37,6 +37,26 @@ export interface Plan {
     rule: PlanRule | null;
 }
 
+/**
+ * The caller's own active subscription, as returned by GET /subscriptions/my-subscription.
+ * Must mirror MySubscriptionResponse in app/schemas/subscription.py 1:1.
+ *
+ * Note this carries the FULL nested plan, which is why the membership card can show
+ * a real plan name and tier - the `subscriptions` array hanging off the Layout user
+ * object only has plan_id.
+ */
+export interface MySubscription {
+    id: number;
+    user_id: number;
+    plan_id: number;
+    start_date: string;
+    end_date: string;
+    is_active: number;
+    plan: Plan;
+    /** null for legacy rows and passes the desk activated by hand - those have no billing portal. */
+    stripe_subscription_id: string | null;
+}
+
 // --- 2. FORMATTING HELPERS ---
 
 export const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -66,6 +86,39 @@ export function formatAllowedDays(allowedDays: string): string {
 /** "09:00:00" -> "09:00" */
 export function formatTime(t: string): string {
     return t.slice(0, 5);
+}
+
+// --- 2b. BILLING CYCLE MATH ---
+// Both take `now` as an argument rather than calling Date.now() themselves. Reading a
+// clock inside a render makes the component impure and trips react-hooks/purity, so
+// the page computes `now` once and hands it down.
+
+/**
+ * How far through the billing period we are, 0-100, for the progress bar.
+ *
+ * A zero-length or inverted period (a hand-edited row, or a start_date that somehow
+ * lands after end_date) would divide by zero, so it reports a full bar instead.
+ */
+export function billingCycleProgress(start: string, end: string, now: number): number {
+    const startMs = new Date(start).getTime();
+    const endMs = new Date(end).getTime();
+
+    const span = endMs - startMs;
+    if (!(span > 0)) return 100;
+
+    const elapsed = ((now - startMs) / span) * 100;
+    return Math.min(100, Math.max(0, elapsed));
+}
+
+/**
+ * Whole days left on the pass, never negative.
+ * Rounds UP so the last few hours still read as "1 day left" rather than "0".
+ */
+export function daysRemaining(end: string, now: number): number {
+    const msLeft = new Date(end).getTime() - now;
+    if (msLeft <= 0) return 0;
+
+    return Math.ceil(msLeft / (1000 * 60 * 60 * 24));
 }
 
 // --- 3. DECOY PRICING THEME ---
