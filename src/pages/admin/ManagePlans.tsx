@@ -4,14 +4,23 @@ import axios from "axios";
 import { api } from "../../api/axios";
 import {
     DAY_LABELS,
+    PLAN_PERKS,
     PLAN_TIERS,
+    activePerks,
     formatTime,
     getTierBadgeClass,
     parseAllowedDays,
     type GymLocation,
+    type PerkKey,
     type Plan,
     type PlanTier,
 } from "../../utils/subscription";
+
+// Every perk off. Used for a fresh form and as the shape of the perk state, so a
+// perk added to PLAN_PERKS can never be missing a key here.
+const NO_PERKS: Record<PerkKey, boolean> = Object.fromEntries(
+    PLAN_PERKS.map((perk) => [perk.key, false])
+) as Record<PerkKey, boolean>;
 
 export default function ManagePlans() {
     // --- TABS ---
@@ -37,6 +46,10 @@ export default function ManagePlans() {
     const [durationDays, setDurationDays] = useState<number>(30);
     const [planTier, setPlanTier] = useState<PlanTier>("Standard");
     const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>([]);
+
+    // One record rather than five useStates, so adding a perk to PLAN_PERKS needs
+    // no change here at all.
+    const [perks, setPerks] = useState<Record<PerkKey, boolean>>(NO_PERKS);
 
     // Optional rule
     const [ruleEnabled, setRuleEnabled] = useState(false);
@@ -140,6 +153,7 @@ export default function ManagePlans() {
         setPrice(3000);
         setDurationDays(30);
         setPlanTier("Standard");
+        setPerks(NO_PERKS);
         setSelectedLocationIds([]);
         setRuleEnabled(false);
         setAllowedTimeStart("");
@@ -158,6 +172,14 @@ export default function ManagePlans() {
         setPrice(plan.price);
         setDurationDays(plan.duration_days);
         setPlanTier(plan.tier);
+
+        // Perks ARE editable, unlike locations and the rule below: they are plain
+        // scalars, so PUT /plans/{id} takes them like it takes price or tier.
+        setPerks(
+            Object.fromEntries(
+                PLAN_PERKS.map((perk) => [perk.key, plan[perk.key]])
+            ) as Record<PerkKey, boolean>
+        );
 
         // Locations and rules can't be changed here, but we still load them so the
         // (disabled) panels show what this plan actually covers. Editing a price
@@ -181,15 +203,17 @@ export default function ManagePlans() {
 
         try {
             if (editingPlanId !== null) {
-                // PUT /plans/{id} accepts only these five scalar fields. Locations and
-                // rules are create-time only on the backend, which is why the form
-                // shows them locked while editing rather than sending them.
+                // PUT /plans/{id} accepts scalars only. Locations and rules are
+                // create-time on the backend, which is why the form shows them
+                // locked while editing rather than sending them - the perks are
+                // scalars, so they go through here like price and tier do.
                 await api.put(`/subscriptions/plans/${editingPlanId}`, {
                     name: planName,
                     description: planDescription || null,
                     price,
                     duration_days: durationDays,
                     tier: planTier,
+                    ...perks,
                 });
                 setSuccessMsg(`Plan "${planName}" updated!`);
             } else {
@@ -199,6 +223,7 @@ export default function ManagePlans() {
                     price,
                     duration_days: durationDays,
                     tier: planTier,
+                    ...perks,
                     location_ids: selectedLocationIds,
                 };
 
@@ -512,6 +537,50 @@ export default function ManagePlans() {
                                     </p>
                                 </div>
 
+                                {/* PLAN PERKS */}
+                                {/* Unlike the tier above, these change what the membership
+                                    actually IS. Editable while editing too - they are plain
+                                    scalars, so PUT /plans/{id} takes them. */}
+                                <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl transition-colors">
+                                    <label className="block text-sm font-bold text-emerald-900 dark:text-emerald-300 mb-1">
+                                        What's Included
+                                    </label>
+                                    <p className="text-xs text-emerald-700 dark:text-emerald-400 opacity-80 mb-3">
+                                        Ticked perks show as green checkmarks on the member's pricing card.
+                                    </p>
+
+                                    <div className="flex flex-col gap-2">
+                                        {PLAN_PERKS.map((perk) => (
+                                            <label
+                                                key={perk.key}
+                                                className="flex items-start gap-2.5 cursor-pointer text-sm text-emerald-900 dark:text-emerald-200"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={perks[perk.key]}
+                                                    onChange={(e) =>
+                                                        setPerks((prev) => ({
+                                                            ...prev,
+                                                            [perk.key]: e.target.checked,
+                                                        }))
+                                                    }
+                                                    className="mt-0.5 w-4 h-4 accent-emerald-600 shrink-0"
+                                                />
+                                                <span>
+                                                    <span className="font-semibold">{perk.label}</span>
+                                                    {/* Only the enforced perk carries a note, so the
+                                                        admin knows which box actually locks a feature. */}
+                                                    {perk.note && (
+                                                        <span className="block text-xs opacity-70 mt-0.5">
+                                                            {perk.note}
+                                                        </span>
+                                                    )}
+                                                </span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+
                                 {/* LOCATIONS + RULES */}
                                 {/* PUT /plans/{id} accepts only the scalar fields above, so while
                                     editing these are shown for context but locked. They stay
@@ -716,6 +785,24 @@ export default function ManagePlans() {
                                                     ⏱️ Restricted hours apply
                                                 </p>
                                             )}
+
+                                            {/* PERKS */}
+                                            {/* Readable at a glance, so you don't have to open the
+                                                editor to see what a plan actually includes. */}
+                                            <div className="flex flex-wrap gap-1.5 mb-4">
+                                                {activePerks(plan).length === 0 ? (
+                                                    <span className="text-xs text-gray-400 italic">No perks included</span>
+                                                ) : (
+                                                    activePerks(plan).map((perk) => (
+                                                        <span
+                                                            key={perk.key}
+                                                            className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-2.5 py-1 rounded-full text-[10px] font-bold"
+                                                        >
+                                                            ✓ {perk.label}
+                                                        </span>
+                                                    ))
+                                                )}
+                                            </div>
                                         </div>
 
                                         {/* PLAN METRICS */}

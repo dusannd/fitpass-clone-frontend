@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { api } from "../../api/axios.ts";
 import Avatar from "../../components/Avatar";
 import MyTrainerChip from "../../components/MyTrainerChip";
 import { parseGoals } from "../../utils/profile";
+import { MY_SUBSCRIPTION_KEY, fetchMySubscription, planIncludesTrainer } from "../../utils/subscription";
 import type { CoachingLink } from "../../utils/coaching";
 import type { UserProfile } from "../../components/Layout";
 
@@ -26,6 +29,22 @@ export default function MemberCoaching() {
     const [error, setError] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
     const [loadingId, setLoadingId] = useState<number | null>(null);
+
+    // Personal training is a plan perk, so the page needs to know which plan the
+    // member holds. useQuery rather than the useEffect below because that pattern is
+    // only still here in the pages that haven't been migrated yet - new fetches use
+    // the query cache, which is also how this shares one request with the pricing page.
+    const subQuery = useQuery({
+        queryKey: MY_SUBSCRIPTION_KEY,
+        queryFn: fetchMySubscription,
+        retry: false,
+    });
+
+    // Gated on isPending, NOT isFetching: with isFetching this would flip to "upgrade
+    // your plan" during every background refetch, in front of a member who is paying
+    // for exactly this feature. Until the first response lands we assume nothing.
+    const entitlementKnown = !subQuery.isPending;
+    const canCoach = planIncludesTrainer(subQuery.data);
 
     useEffect(() => {
         const fetchInitialData = async () => {
@@ -135,6 +154,29 @@ export default function MemberCoaching() {
                 <MyTrainerChip links={links} />
             </div>
 
+            {/* UPGRADE PROMPT */}
+            {/* Shown rather than hiding the page: a member who can't see WHY the
+                buttons stopped working assumes the site is broken. Their existing
+                trainers stay listed below either way. */}
+            {entitlementKnown && !canCoach && (
+                <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border border-purple-200 dark:border-purple-800/50 p-6 rounded-2xl mb-6 transition-colors">
+                    <h2 className="font-black text-lg text-purple-900 dark:text-purple-300 mb-1">
+                        Personal training isn't part of your membership
+                    </h2>
+                    <p className="text-sm text-purple-800 dark:text-purple-400 mb-4 leading-relaxed">
+                        {subQuery.data
+                            ? `Your ${subQuery.data.plan.name} plan doesn't include a personal trainer. Upgrade to a plan that does and you can book 1-on-1 sessions.`
+                            : "You don't have an active membership yet. Pick a plan that includes a personal trainer to start booking 1-on-1 sessions."}
+                    </p>
+                    <Link
+                        to="/subscriptions"
+                        className="inline-block bg-purple-600 hover:bg-purple-500 text-white font-black py-2.5 px-5 rounded-xl transition-all shadow-sm hover:shadow-md"
+                    >
+                        View Plans
+                    </Link>
+                </div>
+            )}
+
             {successMsg && (
                 <div className="bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 p-4 rounded-xl mb-6 font-bold border border-emerald-200 dark:border-emerald-800 transition-colors">
                     ✅ {successMsg}
@@ -216,13 +258,16 @@ export default function MemberCoaching() {
                                 {/* mt-auto pushes the line and the button to the bottom, so all cards are the same height */}
                                 <div className="w-full h-px bg-gray-200 dark:bg-slate-800 mt-auto mb-5"></div>
 
+                                {/* The button only avoids showing a request that is certain
+                                    to come back 403 - the real gate is the backend's. An
+                                    accepted trainer keeps their green card either way. */}
                                 <button
-                                    disabled={isPending || isAccepted || isCurrentlyLoading}
+                                    disabled={isPending || isAccepted || isCurrentlyLoading || !canCoach}
                                     onClick={() => void handleSendRequest(trainer.id, `${trainer.first_name}`)}
                                     className={`w-full font-black py-3 px-4 rounded-xl transition-all shadow-sm ${
                                         isAccepted
                                             ? "bg-emerald-500 text-white cursor-default" // Zeleno jer je tvoj aktuelni trener
-                                            : isPending
+                                            : isPending || !canCoach
                                                 ? "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed" // Sivo jer se čeka
                                                 : "bg-blue-600 hover:bg-blue-700 text-white hover:shadow-md" // Plavo za slanje
                                     }`}
@@ -233,7 +278,9 @@ export default function MemberCoaching() {
                                             ? "Your Trainer 🟢"
                                             : isPending
                                                 ? "Request Pending ⏳"
-                                                : "Request Coaching"}
+                                                : canCoach
+                                                    ? "Request Coaching"
+                                                    : "Requires an upgrade 🔒"}
                                 </button>
                             </div>
                         );

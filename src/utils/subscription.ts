@@ -1,3 +1,6 @@
+import axios from "axios";
+import { api } from "../api/axios";
+
 // Shared types and helpers for subscription plans.
 // Same reasoning as utils/workout.ts and utils/profile.ts: these used to be
 // duplicated inside Subscriptions.tsx and ManagePlans.tsx, and a file that exports
@@ -35,7 +38,54 @@ export interface Plan {
     tier: PlanTier;
     locations: GymLocation[];
     rule: PlanRule | null;
+
+    // What the membership actually INCLUDES, as opposed to how its card is
+    // styled. See PLAN_PERKS below.
+    includes_trainer: boolean;
+    includes_group_classes: boolean;
+    has_sauna_access: boolean;
+    has_towel_service: boolean;
+    allows_guest: boolean;
 }
+
+// --- 1b. PLAN PERKS ---
+// One list, two consumers: the admin checkboxes and the member pricing bullets.
+// Adding a perk here makes it appear in both at once - there is no second place
+// to remember, and the two can never end up advertising different things.
+//
+// tier is decoration (see section 3); these are the columns that make an
+// expensive plan worth more than the cheap one.
+
+export type PerkKey =
+    | "includes_trainer"
+    | "includes_group_classes"
+    | "has_sauna_access"
+    | "has_towel_service"
+    | "allows_guest";
+
+export interface PlanPerk {
+    key: PerkKey;
+    /** The bullet on the pricing card, and the label beside the admin checkbox. */
+    label: string;
+    /** Only set where ticking the box changes what the backend allows. */
+    note?: string;
+}
+
+export const PLAN_PERKS: PlanPerk[] = [
+    {
+        key: "includes_trainer",
+        label: "Personal trainer included",
+        note: "Enforced: members whose plan lacks this cannot request a trainer or book sessions.",
+    },
+    { key: "includes_group_classes", label: "Group classes" },
+    { key: "has_sauna_access", label: "Sauna access" },
+    { key: "has_towel_service", label: "Towel service" },
+    { key: "allows_guest", label: "Bring a guest" },
+];
+
+/** The perks a plan actually carries, in the order they are advertised. */
+export const activePerks = (plan: Plan): PlanPerk[] =>
+    PLAN_PERKS.filter((perk) => plan[perk.key]);
 
 /**
  * The caller's own active subscription, as returned by GET /subscriptions/my-subscription.
@@ -56,6 +106,46 @@ export interface MySubscription {
     /** null for legacy rows and passes the desk activated by hand - those have no billing portal. */
     stripe_subscription_id: string | null;
 }
+
+// --- 1c. THE CALLER'S OWN SUBSCRIPTION ---
+// Read from the API rather than from the Layout user object, because only this
+// endpoint carries the nested plan - `user.subscriptions` has a bare plan_id and
+// therefore no name, no tier and no perks.
+//
+// Three pages need it now (Subscriptions, MemberCoaching, MemberAppointments), so
+// the key and the fetch live here: one shared cache entry instead of three copies
+// of the 404 handling below.
+
+export const MY_SUBSCRIPTION_KEY = ["mySubscription"] as const;
+
+/**
+ * The caller's active subscription, or null when they have none.
+ *
+ * A 404 here is the backend saying "nothing active", which is the normal state for
+ * a member who has not bought yet - not a failure. Every caller should pass
+ * `retry: false` alongside this, since an expected answer is not worth retrying.
+ */
+export async function fetchMySubscription(): Promise<MySubscription | null> {
+    try {
+        const res = await api.get<MySubscription>("/subscriptions/my-subscription");
+        return res.data;
+    } catch (err) {
+        if (axios.isAxiosError(err) && err.response?.status === 404) return null;
+        throw err;
+    }
+}
+
+/**
+ * Does the caller's active plan include personal training?
+ *
+ * No subscription at all reads the same as a plan without the perk - which is
+ * exactly how the backend answers it too (app/api/coaching.py).
+ *
+ * This only decides what the UI shows. The real gate is the 403 from the API; a
+ * member who edits their way past this still cannot book anything.
+ */
+export const planIncludesTrainer = (sub: MySubscription | null | undefined): boolean =>
+    sub?.plan?.includes_trainer === true;
 
 // --- 2. FORMATTING HELPERS ---
 

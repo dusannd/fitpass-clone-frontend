@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import type { FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { api } from "../../api/axios.ts";
+import { MY_SUBSCRIPTION_KEY, fetchMySubscription, planIncludesTrainer } from "../../utils/subscription";
 
 interface UserInfo {
     first_name: string;
@@ -41,6 +44,21 @@ export default function MemberAppointments() {
     const [sessionDate, setSessionDate] = useState("");
     const [startTime, setStartTime] = useState("10:00");
     const [endTime, setEndTime] = useState("11:00");
+
+    // Booking needs a plan that includes personal training, same as requesting a
+    // trainer does - otherwise a member who linked up and then downgraded would keep
+    // booking forever. Shares its cache entry with the pricing and coaching pages.
+    const subQuery = useQuery({
+        queryKey: MY_SUBSCRIPTION_KEY,
+        queryFn: fetchMySubscription,
+        retry: false,
+    });
+
+    // isPending, not isFetching: keyed to isFetching, the form would swap itself for
+    // an upgrade notice on every background refetch. Assume nothing until the first
+    // response lands.
+    const entitlementKnown = !subQuery.isPending;
+    const canBook = planIncludesTrainer(subQuery.data);
 
     // Jedna funkcija za povlačenje podataka — koristi je i inicijalni load i refresh posle zakazivanja
     const refreshData = useCallback(async () => {
@@ -137,7 +155,27 @@ export default function MemberAppointments() {
                         </div>
                     )}
 
-                    {myTrainers.length === 0 ? (
+                    {/* The entitlement is checked BEFORE the trainer list, because a
+                        member whose plan dropped the perk still has their trainer -
+                        telling them to "go request one" would send them to a page that
+                        refuses them too. Sessions already booked stay listed on the
+                        right; only new bookings are blocked, and the 403 from the API
+                        is what actually enforces that. */}
+                    {entitlementKnown && !canBook ? (
+                        <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border border-purple-200 dark:border-purple-800/50 p-4 rounded-xl transition-colors">
+                            <p className="text-sm text-purple-800 dark:text-purple-400 mb-4 leading-relaxed">
+                                {subQuery.data
+                                    ? `Your ${subQuery.data.plan.name} plan doesn't include personal training, so new sessions can't be booked.`
+                                    : "You need an active membership that includes personal training to book a session."}
+                            </p>
+                            <Link
+                                to="/subscriptions"
+                                className="inline-block bg-purple-600 hover:bg-purple-500 text-white font-black py-2.5 px-5 rounded-xl transition-all shadow-sm hover:shadow-md"
+                            >
+                                View Plans
+                            </Link>
+                        </div>
+                    ) : myTrainers.length === 0 ? (
                         <div className="text-sm text-amber-800 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 p-4 rounded-xl border border-amber-200 dark:border-amber-800 transition-colors">
                             You don't have an active trainer yet. Go to the Find Trainer tab to request one!
                         </div>

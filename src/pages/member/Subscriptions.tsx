@@ -4,12 +4,15 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import axios from "axios";
 import { api } from "../../api/axios";
 import {
+    activePerks,
     billingCycleProgress,
     daysRemaining,
+    fetchMySubscription,
     formatAllowedDays,
     formatTime,
     getPlanTheme,
     getTierBadgeClass,
+    MY_SUBSCRIPTION_KEY,
     type MySubscription,
     type Plan,
 } from "../../utils/subscription";
@@ -62,24 +65,22 @@ export default function Subscriptions() {
     // this endpoint carries the nested plan - the membership card needs the name and
     // tier, and `user.subscriptions` has neither.
     const mySubQuery = useQuery({
-        queryKey: ["mySubscription"],
+        queryKey: MY_SUBSCRIPTION_KEY,
         queryFn: async (): Promise<ActiveSubscription | null> => {
-            try {
-                const res = await api.get<MySubscription>("/subscriptions/my-subscription");
-                // The clock is stamped HERE, not during render: reading it while
-                // rendering makes the component impure (react-hooks/purity). The
-                // days-left figure is therefore "as of the last refresh", which is
-                // the honest reading anyway - nothing polls this page.
-                return { ...res.data, fetchedAt: Date.now() };
-            } catch (err) {
-                // A 404 here is the backend saying "no active subscription", which is
-                // the normal state for a new member - not a failure. Without this the
-                // page would render its error state for everybody who hasn't bought yet.
-                if (axios.isAxiosError(err) && err.response?.status === 404) return null;
-                throw err;
-            }
+            // The fetch itself (including treating a 404 as "nothing active") is
+            // shared with the coaching pages. Only the timestamp below is local to
+            // this one.
+            const sub = await fetchMySubscription();
+            if (!sub) return null;
+
+            // The clock is stamped HERE, not during render: reading it while
+            // rendering makes the component impure (react-hooks/purity). The
+            // days-left figure is therefore "as of the last refresh", which is
+            // the honest reading anyway - nothing polls this page.
+            return { ...sub, fetchedAt: Date.now() };
         },
-        // The 404 above is an expected answer, so there is nothing to retry.
+        // The 404 handled inside fetchMySubscription is an expected answer, so
+        // there is nothing to retry.
         retry: false,
     });
 
@@ -254,6 +255,12 @@ export default function Subscriptions() {
                         } else {
                             features.push("24/7 Unlimited Access");
                         }
+
+                        // The bullets above are DERIVED from where and when the pass
+                        // works. These are what the plan explicitly says it includes,
+                        // so they go last - the trainer line is the one people are
+                        // scanning for.
+                        features.push(...activePerks(plan).map((perk) => perk.label));
 
                         const isDisabled = !!activeSub || buyMutation.isPending;
 
