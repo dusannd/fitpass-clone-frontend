@@ -4,11 +4,22 @@ import axios from "axios";
 import { api } from "../../api/axios";
 
 // --- INTERFACES ---
+// Why the backend answers a refusal in a reason code rather than only in prose:
+// the desk needs to tell "never paid" apart from "paid, but not valid at THIS
+// gym right now", and those two want different colours and different buttons.
+type DenialReason = "none" | "location" | "day" | "time" | null;
+
 interface StatusResponse {
     user_id: number;
     full_name: string;
     email: string;
+    // The single "is the green light on" flag. False for a member whose pass is
+    // real but does not cover this location or this hour - so a caller that reads
+    // nothing else still errs on the safe side.
     has_active_subscription: boolean;
+    // Whether a pass exists AT ALL, regardless of whether it opens this door.
+    subscription_active: boolean;
+    denial_reason: DenialReason;
     plan_name?: string;
     days_left?: number;
     expires_on?: string;
@@ -80,6 +91,40 @@ function useDebouncedValue(value: string, delay = 300): string {
 function formatDuration(minutes: number): string {
     if (minutes < 60) return `${minutes}m`;
     return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+/**
+ * Picks the colours and the headline for the status card.
+ *
+ * Three states rather than two. The panel used to be a green/red binary, which
+ * painted a fully paid-up member standing at the wrong gym exactly the same as
+ * somebody who has never paid a dinar - and the manual override button sits
+ * directly underneath. Amber says "the pass is real, it just doesn't open THIS
+ * door right now", which is the case where an override is a judgement call
+ * rather than a mistake.
+ */
+function statusTheme(status: StatusResponse) {
+    if (status.has_active_subscription) {
+        return {
+            card: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200",
+            badge: "bg-emerald-200 text-emerald-800",
+            label: "ACTIVE SUBSCRIPTION 🟢",
+        };
+    }
+
+    if (status.subscription_active) {
+        return {
+            card: "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200",
+            badge: "bg-amber-200 text-amber-900",
+            label: status.denial_reason === "location" ? "PASS NOT VALID HERE 🟠" : "PASS NOT VALID NOW 🟠",
+        };
+    }
+
+    return {
+        card: "bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 text-rose-900 dark:text-rose-200",
+        badge: "bg-rose-200 text-rose-800",
+        label: "NO ACTIVE SUBSCRIPTION 🔴",
+    };
 }
 
 export default function WorkerDashboard() {
@@ -203,9 +248,15 @@ export default function WorkerDashboard() {
     // hit the server every single time it is asked for. Behind a query key, a
     // worker re-checking the same member would be answered from the cache, and a
     // subscription that expired in the meantime would still read as active.
+    // The location travels in the mutation variables rather than being read off
+    // the locationId closure inside mutationFn. The answer depends on WHICH gym
+    // was asked about, so the request has to carry the value that was on screen
+    // when the worker pressed Check - not whatever it has drifted to since.
     const statusMutation = useMutation({
-        mutationFn: (targetId: number) =>
-            api.get<StatusResponse>(`/worker/user/${targetId}/status`).then((res) => res.data),
+        mutationFn: ({ userId, atLocation }: { userId: number; atLocation: number }) =>
+            api
+                .get<StatusResponse>(`/worker/user/${userId}/status?location_id=${atLocation}`)
+                .then((res) => res.data),
         onSuccess: () => setError(""),
         onError: (err: unknown) => {
             if (axios.isAxiosError(err)) setError(err.response?.data?.detail || "User not found.");
@@ -221,7 +272,7 @@ export default function WorkerDashboard() {
         statusMutation.reset(); // Clears the previous member's card before the new one lands
         setSelectedUserId(targetId);
         setIsDropdownOpen(false);
-        statusMutation.mutate(targetId);
+        statusMutation.mutate({ userId: targetId, atLocation: locationId });
     };
 
     const handleSelectResult = (result: SearchResult) => {
@@ -273,6 +324,35 @@ export default function WorkerDashboard() {
     const handleForceCheckout = (userId: number, name: string) => {
         if (!confirm(`Are you sure you want to force checkout ${name}?`)) return;
         checkoutMutation.mutate({ userId, name });
+    };
+
+    // Revoking a pass is a billing action, not a physical one - it deliberately
+    // does NOT check the member out of the building. force-checkout above is what
+    // does that, and the two are separate on purpose.
+    const cancelSubMutation = useMutation({
+        mutationFn: ({ userId }: { userId: number; atLocation: number }) =>
+            api
+                .post<{ message?: string }>(`/worker/user/${userId}/cancel-subscription`)
+                .then((res) => res.data),
+        onSuccess: async (data, variables) => {
+            setError("");
+            setSuccessMsg(data.message || "The member's pass has been revoked.");
+            await refreshAfterAction();
+            // The status card comes off a MUTATION, not a query, so invalidating
+            // the ["worker"] prefix does not touch it. Without this re-check the
+            // card would go on showing a live pass that no longer exists.
+            statusMutation.mutate({ userId: variables.userId, atLocation: variables.atLocation });
+        },
+        onError: (err: unknown) => {
+            setSuccessMsg("");
+            if (axios.isAxiosError(err)) setError(err.response?.data?.detail || "Failed to revoke the pass.");
+            else setError("Failed to revoke the pass.");
+        },
+    });
+
+    const handleCancelSubscription = (userId: number) => {
+        if (!confirm("Are you sure you want to revoke this member's pass?")) return;
+        cancelSubMutation.mutate({ userId, atLocation: locationId });
     };
 
     // Durations are measured against the moment the data actually arrived rather
@@ -374,30 +454,63 @@ export default function WorkerDashboard() {
                         {error && <div className="bg-red-100 dark:bg-rose-950/40 text-red-700 dark:text-rose-300 p-4 rounded-xl mt-6 font-bold text-sm border border-red-200 dark:border-rose-900/60">{error}</div>}
                         {successMsg && <div className="bg-green-100 dark:bg-emerald-950/40 text-green-700 dark:text-emerald-300 p-4 rounded-xl mt-6 font-bold text-sm border border-green-200 dark:border-emerald-900/60">{successMsg}</div>}
 
-                        {statusData && (
-                            <div className="mt-8 border-t border-gray-100 dark:border-slate-800 pt-6 flex flex-col gap-6">
-                                <div className={`p-6 rounded-2xl border flex flex-col items-start gap-4 ${
-                                    statusData.has_active_subscription
-                                        ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200"
-                                        : "bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800/60 text-rose-900 dark:text-rose-200"
-                                }`}>
-                                    <div>
-                                        <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider inline-block mb-2 ${statusData.has_active_subscription ? "bg-emerald-200 text-emerald-800" : "bg-rose-200 text-rose-800"}`}>
-                                            {statusData.has_active_subscription ? "ACTIVE SUBSCRIPTION 🟢" : "NO ACTIVE SUBSCRIPTION 🔴"}
-                                        </span>
-                                        <h2 className="text-2xl font-black">{statusData.full_name}</h2>
-                                        <p className="text-sm opacity-80">{statusData.email}</p>
+                        {statusData && (() => {
+                            const theme = statusTheme(statusData);
+
+                            return (
+                                <div className="mt-8 border-t border-gray-100 dark:border-slate-800 pt-6 flex flex-col gap-6">
+                                    <div className={`p-6 rounded-2xl border flex flex-col items-start gap-4 ${theme.card}`}>
+                                        <div>
+                                            <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider inline-block mb-2 ${theme.badge}`}>
+                                                {theme.label}
+                                            </span>
+                                            <h2 className="text-2xl font-black">{statusData.full_name}</h2>
+                                            <p className="text-sm opacity-80">{statusData.email}</p>
+                                        </div>
+
+                                        {/* The verdict in words. On amber this is the only place the
+                                            worker learns WHICH rule blocked the pass, so it is not
+                                            optional decoration. */}
+                                        <p className="text-sm font-bold">{statusData.message}</p>
+
+                                        {/* Plan and expiry now come back on a refusal too, not just on
+                                            a green light - a worker explaining why the door stayed
+                                            shut needs them more than one waving somebody through. */}
+                                        {statusData.subscription_active && (
+                                            <p className="text-xs font-semibold opacity-80">
+                                                {statusData.plan_name}
+                                                {statusData.days_left !== undefined && ` · ${statusData.days_left} days left`}
+                                                {statusData.expires_on && ` · expires ${new Date(statusData.expires_on).toLocaleDateString()}`}
+                                            </p>
+                                        )}
+
+                                        <div className="w-full flex flex-col sm:flex-row gap-3">
+                                            <button
+                                                onClick={() => selectedUserId !== null && overrideMutation.mutate(selectedUserId)}
+                                                disabled={overrideMutation.isPending || selectedUserId === null}
+                                                className="flex-1 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold px-6 py-3 rounded-xl hover:bg-black dark:hover:bg-white transition shadow-md disabled:opacity-60"
+                                            >
+                                                {overrideMutation.isPending ? "Opening..." : "🔓 Manual Door Override"}
+                                            </button>
+
+                                            {/* Gated on subscription_active, NOT on has_active_subscription:
+                                                the amber case is a pass that genuinely exists and can
+                                                genuinely be revoked, and that is exactly where the
+                                                stricter flag would have hidden the button. */}
+                                            {statusData.subscription_active && (
+                                                <button
+                                                    onClick={() => selectedUserId !== null && handleCancelSubscription(selectedUserId)}
+                                                    disabled={cancelSubMutation.isPending || selectedUserId === null}
+                                                    className="flex-1 bg-rose-600 text-white font-bold px-6 py-3 rounded-xl hover:bg-rose-700 transition shadow-md disabled:opacity-60"
+                                                >
+                                                    {cancelSubMutation.isPending ? "Revoking..." : "🚫 Revoke Pass"}
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
-                                    <button
-                                        onClick={() => selectedUserId !== null && overrideMutation.mutate(selectedUserId)}
-                                        disabled={overrideMutation.isPending || selectedUserId === null}
-                                        className="w-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold px-6 py-3 rounded-xl hover:bg-black dark:hover:bg-white transition shadow-md disabled:opacity-60"
-                                    >
-                                        {overrideMutation.isPending ? "Opening..." : "🔓 Manual Door Override"}
-                                    </button>
                                 </div>
-                            </div>
-                        )}
+                            );
+                        })()}
                     </div>
                 </div>
 
