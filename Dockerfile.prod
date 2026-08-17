@@ -1,0 +1,96 @@
+# check=skip=SecretsUsedInArgOrEnv
+# ^ This parser directive must stay on line 1 (a directive after any comment is
+#   treated as a plain comment and ignored).
+#   BuildKit warns whenever an ARG name looks secret-ish, and flags
+#   VITE_RECAPTCHA_SITE_KEY. That is a false positive: a reCAPTCHA *site* key is
+#   public by design — it is rendered into the page for the browser to use. The
+#   matching secret, RECAPTCHA_SECRET, is only ever handled by the backend and
+#   never appears here.
+
+# =============================================================================
+# Production image for the FitPass frontend.
+#
+# This is a MULTI-STAGE build. The key idea: the tools we need to BUILD the app
+# (Node, npm, TypeScript, Vite, ~400MB of node_modules) are completely different
+# from what we need to SERVE it (a web server and a folder of static files).
+#
+# Stage 1 does the building. Stage 2 starts from a fresh, tiny image and copies
+# ONLY the finished `dist/` folder out of stage 1. Everything else in stage 1 is
+# thrown away and never ships. Result: ~50MB instead of ~1GB, and no Node runtime
+# in production to be attacked.
+# =============================================================================
+
+
+# --- 1. BUILD STAGE ----------------------------------------------------------
+# Named `builder` so stage 2 can refer back to it with `--from=builder`.
+#
+# Node 22, NOT the node:18 you may see in older tutorials: vite@8 declares
+# `engines: { node: "^20.19.0 || >=22.12.0" }`, so Node 18 fails outright.
+# `-alpine` is a minimal Linux base, which keeps the build stage small too.
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Copy ONLY the manifests first, before the source code.
+# Docker caches each instruction as a layer and reuses it while its inputs are
+# unchanged. Dependencies change rarely, source code changes constantly — so by
+# installing deps in their own layer, editing a component no longer re-downloads
+# every package. This one ordering trick turns a 2-minute rebuild into 10 seconds.
+COPY package.json package-lock.json ./
+
+# `npm ci` instead of `npm install`:
+#   - installs exactly what package-lock.json pins (reproducible builds)
+#   - wipes node_modules first, so no leftovers from a previous state
+#   - fails loudly if the lockfile and package.json disagree
+# Note we intentionally do NOT pass --omit=dev: TypeScript, Vite and the Vite
+# plugins are devDependencies, and `npm run build` runs `tsc -b && vite build`.
+# Without dev deps there is nothing here that can build anything.
+RUN npm ci
+
+# Now the source. Everything listed in .dockerignore is skipped.
+COPY . .
+
+# --- Build-time configuration -----------------------------------------------
+# IMPORTANT, and the #1 thing people get wrong with Vite in Docker:
+# `import.meta.env.VITE_*` is NOT read at runtime. Vite performs a literal
+# find-and-replace during `vite build`, baking the values straight into the
+# JavaScript bundle. Setting these in docker-compose `environment:` would do
+# nothing at all — by the time the container starts, the bundle is already final.
+#
+# So they have to arrive here, at build time, as ARGs. docker-compose passes
+# them via `build.args`.
+ARG VITE_API_BASE_URL=/api
+ARG VITE_FEATURE_RECAPTCHA=false
+ARG VITE_RECAPTCHA_SITE_KEY=
+
+# ARG is only visible to Docker; Vite reads process env, so promote them to ENV.
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ENV VITE_FEATURE_RECAPTCHA=$VITE_FEATURE_RECAPTCHA
+ENV VITE_RECAPTCHA_SITE_KEY=$VITE_RECAPTCHA_SITE_KEY
+
+# Type-check, then bundle. Output lands in /app/dist.
+# Heads up: tsconfig.app.json enables noUnusedLocals/noUnusedParameters, so an
+# unused variable is a hard build failure here — that is deliberate.
+RUN npm run build
+
+
+# --- 2. RUNTIME STAGE --------------------------------------------------------
+# A brand new image. Nothing from `builder` exists here unless explicitly copied.
+FROM nginx:alpine
+
+# Our server block: SPA fallback + the /api reverse proxy.
+# nginx:alpine's main nginx.conf has an `include /etc/nginx/conf.d/*.conf`, and
+# ships a default.conf we overwrite — otherwise its default site would win.
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# The only thing we carry over from the build stage: the compiled static site.
+# No Node, no npm, no node_modules, no TypeScript, no source code.
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Documents the port for humans and tooling; it does not publish anything.
+# Publishing happens in docker-compose via `ports:`.
+EXPOSE 80
+
+# No CMD needed — the nginx base image already runs `nginx -g "daemon off;"`.
+# (`daemon off` matters: a container dies when PID 1 exits, so the server must
+# stay in the foreground instead of forking into the background.)
