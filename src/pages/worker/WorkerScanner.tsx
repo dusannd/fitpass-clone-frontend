@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Html5Qrcode } from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import axios from "axios";
 import { api } from "../../api/axios";
 
@@ -41,6 +41,8 @@ export default function WorkerScanner() {
     const scanModeRef = useRef<"ENTRY" | "EXIT">(scanMode);
     const locationIdRef = useRef<number>(locationId);
     const scannerRef = useRef<Html5Qrcode | null>(null);
+    // Held so the unmount cleanup can wait for a camera that is still starting
+    const startPromiseRef = useRef<Promise<void> | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
 
     // Update refs whenever state changes
@@ -60,10 +62,11 @@ export default function WorkerScanner() {
 
     // --- INITIALIZE CAMERA SCANNER ---
     useEffect(() => {
-        // Prevent multiple instances in React StrictMode
-        if (!scannerRef.current) {
-            scannerRef.current = new Html5Qrcode("reader");
-        }
+        // Owns the camera for as long as the page is mounted. Deliberately NOT keyed
+        // on isScanning: that flips on every single scan, so rebuilding the scanner
+        // here would close and reopen the camera between codes.
+        const scanner = new Html5Qrcode("reader");
+        scannerRef.current = scanner;
 
         // Define the success handler inside the effect to capture the correct scope
         const handleScanSuccess = async (decodedText: string) => {
@@ -114,7 +117,7 @@ export default function WorkerScanner() {
 
         const startScanning = async () => {
             try {
-                if (scannerRef.current && isScanning) {
+                if (scannerRef.current) {
                     await scannerRef.current.start(
                         { facingMode: "environment" }, // Prefer back camera on mobile
                         {
@@ -130,19 +133,63 @@ export default function WorkerScanner() {
             }
         };
 
-        if (isScanning) {
-            void startScanning();
-        }
+        // Kept so the cleanup can wait for it. Calling stop() while start() is still
+        // in flight is exactly what leaves the camera light on: isScanning is still
+        // false at that moment, html5-qrcode throws "Cannot stop, scanner is not
+        // running or paused.", the old .catch() swallowed it, and the video track was
+        // never released.
+        startPromiseRef.current = startScanning();
 
-        // Cleanup function when component unmounts or scanning pauses
+        // Cleanup function when component unmounts
         return () => {
-            if (scannerRef.current && scannerRef.current.isScanning) {
-                scannerRef.current.stop().catch(console.error);
-            }
+            // Give up ownership synchronously, before anything is awaited. StrictMode
+            // runs this cleanup and then the effect again, so the replacement scanner
+            // must not be reachable from the teardown of the old one.
+            scannerRef.current = null;
+            const pendingStart = startPromiseRef.current;
+            startPromiseRef.current = null;
+
+            void (async () => {
+                try {
+                    await pendingStart;
+                    if (scanner.isScanning) {
+                        await scanner.stop();
+                    }
+                    // clear() empties the #reader element, so only tidy up when
+                    // nobody has mounted a new scanner into it in the meantime.
+                    if (scannerRef.current === null) {
+                        scanner.clear();
+                    }
+                } catch (err) {
+                    // html5-qrcode rejects with a plain string, not an Error.
+                    console.error("Camera teardown failed:", err);
+                }
+            })();
         };
-        // CRITICAL: We strictly rely ONLY on isScanning.
-        // Changing scanMode no longer restarts the camera!
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // --- PAUSE BETWEEN SCANS INSTEAD OF STOPPING ---
+    // CRITICAL: We strictly rely ONLY on isScanning.
+    // Changing scanMode no longer restarts the camera!
+    useEffect(() => {
+        const scanner = scannerRef.current;
+        if (!scanner) return;
+
+        void (async () => {
+            // On the very first run the camera may still be starting up.
+            await startPromiseRef.current;
+            if (scannerRef.current !== scanner) return;
+
+            // pause(true) freezes the video but keeps the stream open, so the next
+            // scan does not pay for the camera warming up all over again. Guarded on
+            // the reported state because both calls throw if it is already there.
+            const state = scanner.getState();
+            if (isScanning && state === Html5QrcodeScannerState.PAUSED) {
+                scanner.resume();
+            } else if (!isScanning && state === Html5QrcodeScannerState.SCANNING) {
+                scanner.pause(true);
+            }
+        })();
     }, [isScanning]);
 
     return (

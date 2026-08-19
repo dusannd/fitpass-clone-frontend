@@ -115,8 +115,14 @@ export default function Login() {
                 } else if (status === 403) {
                     setError("Your email is not verified.");
                 } else if (status === 429) {
-                    setError("Too many attempts. Please wait.");
-                    setCooldown(60); // 60 seconds cooldown
+                    // The backend sends the exact seconds left in the window as
+                    // Retry-After. Don't read the body here: slowapi answers a 429
+                    // with {"error": "Rate limit exceeded: 5 per 1 minute"}, so the
+                    // first number in it is the request count, not a wait time.
+                    const retryAfter = Number(err.response.headers["retry-after"]);
+                    const sec = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 60;
+                    setError(`Too many attempts. Please wait ${sec} seconds.`);
+                    setCooldown(sec);
                 } else {
                     setError(detail);
                 }
