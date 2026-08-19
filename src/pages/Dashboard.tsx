@@ -5,6 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import axios from "axios";
 import { api } from "../api/axios";
 import Avatar from "../components/Avatar";
+import { useGymWebSocket, type GymWsMessage } from "../hooks/useGymWebSocket";
 import { parseGoals, getPrimaryAccent } from "../utils/profile";
 import type { User } from "../components/Layout";
 
@@ -17,6 +18,21 @@ interface QrState {
     actionType: "ENTRY" | "EXIT";
     cooldownEndsAt: number;
 }
+
+// The turnstile event the backend pushes over the socket. The hook hands
+// messages back as `unknown` because it does not know or care what this app
+// sends, so we narrow them here, once, at the point of use.
+interface AccessEvent {
+    type: "ACCESS_EVENT";
+    access_granted: boolean;
+    action_type: "ENTRY" | "EXIT";
+    reason?: string;
+}
+
+const isAccessEvent = (value: unknown): value is AccessEvent =>
+    typeof value === "object"
+    && value !== null
+    && (value as { type?: unknown }).type === "ACCESS_EVENT";
 
 const getInitialQrState = (): QrState | null => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -91,7 +107,9 @@ export default function Dashboard() {
     const [accessGranted, setAccessGranted] = useState<boolean>(false);
     const [scanMessage, setScanMessage] = useState<string>("");
 
-    const wsRef = useRef<WebSocket | null>(null);
+    // Tells a first connection apart from a recovery. Only the latter needs a
+    // resync (see effect 5).
+    const hasConnectedRef = useRef(false);
 
     // --- 1. FETCH PHYSICAL STATUS ---
     const fetchStatus = useCallback(async () => {
@@ -173,53 +191,77 @@ export default function Dashboard() {
         return () => clearInterval(interval);
     }, [isMember]);
 
-    // --- 4. WEBSOCKET CONNECTION ---
+    // --- 4. LIVE TURNSTILE FEED ---
+    // This used to be a hand-rolled `new WebSocket` in an effect right here. That
+    // version died permanently on the first network hiccup - and a phone handing
+    // off from mobile data to the gym WiFi is exactly that. useGymWebSocket keeps
+    // the same message handling but reconnects itself with exponential backoff.
+    //
+    // The handler body below is unchanged from the old ws.onmessage. It stays a
+    // callback rather than an effect on purpose: reacting to a door opening is an
+    // event, not state to synchronise, and running these setState calls from an
+    // effect body would cascade renders.
+    const handleAccessEvent = (message: GymWsMessage) => {
+        if (!isAccessEvent(message.data)) return;
+
+        const data = message.data;
+
+        // Worker-initiated admin actions (manual override / force checkout) must
+        // instantly resync the UI, even if a QR flow was mid-flight.
+        if (typeof data.reason === "string" && (data.reason.includes("Manual Override") || data.reason.includes("Force Checkout"))) {
+            setQrToken("");
+            setTimeLeft(0);
+            localStorage.removeItem(STORAGE_KEY);
+            void fetchStatus();
+        }
+
+        if (data.access_granted) {
+            setAccessGranted(true);
+            setScanMessage(data.action_type === "ENTRY" ? "Welcome in!" : "Goodbye!");
+
+            // Instantly clear QR code
+            setQrToken("");
+            setTimeLeft(0);
+            localStorage.removeItem(STORAGE_KEY);
+
+            // Refresh physical state (Transforms Check-In to Check-Out UI)
+            void fetchStatus();
+
+            setTimeout(() => {
+                setAccessGranted(false);
+                setScanMessage("");
+            }, 4000);
+        } else {
+            setError(`Denied: ${data.reason}`);
+        }
+    };
+
+    const { status: wsStatus } = useGymWebSocket(
+        `${WS_BASE_URL}/access/ws`,
+        { enabled: isMember, onMessage: handleAccessEvent },
+    );
+
+    // --- 5. RESYNC AFTER A RECOVERED CONNECTION ---
+    // Events that fire while the socket is down are gone for good - the backend
+    // pushes them to a connection that no longer exists and nothing replays them.
+    // So a member could be checked out at the desk during the outage and still see
+    // "You are inside" after reconnecting. Refetching once on the way back from a
+    // drop closes that gap. The very first connection is skipped, because effect 1
+    // has already fetched the status on mount.
     useEffect(() => {
-        if (!isMember) return;
+        if (wsStatus !== "OPEN") return;
 
-        const ws = new WebSocket(`${WS_BASE_URL}/access/ws`);
-        wsRef.current = ws;
+        // First time we ever connect: effect 1 already fetched the status on
+        // mount, so a second request here would be pure duplication.
+        if (!hasConnectedRef.current) {
+            hasConnectedRef.current = true;
+            return;
+        }
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            if (data.type === "ACCESS_EVENT") {
-                // Worker-initiated admin actions (manual override / force checkout) must
-                // instantly resync the UI, even if a QR flow was mid-flight.
-                if (typeof data.reason === "string" && (data.reason.includes("Manual Override") || data.reason.includes("Force Checkout"))) {
-                    setQrToken("");
-                    setTimeLeft(0);
-                    localStorage.removeItem(STORAGE_KEY);
-                    void fetchStatus();
-                }
+        void fetchStatus();
+    }, [wsStatus, fetchStatus]);
 
-                if (data.access_granted) {
-                    setAccessGranted(true);
-                    setScanMessage(data.action_type === "ENTRY" ? "Welcome in!" : "Goodbye!");
-
-                    // Instantly clear QR code
-                    setQrToken("");
-                    setTimeLeft(0);
-                    localStorage.removeItem(STORAGE_KEY);
-
-                    // Refresh physical state (Transforms Check-In to Check-Out UI)
-                    void fetchStatus();
-
-                    setTimeout(() => {
-                        setAccessGranted(false);
-                        setScanMessage("");
-                    }, 4000);
-                } else {
-                    setError(`Denied: ${data.reason}`);
-                }
-            }
-        };
-
-        return () => {
-            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
-        };
-    }, [isMember, fetchStatus]);
-
-    // --- 5. QR GENERATION ---
+    // --- 6. QR GENERATION ---
     const handleGenerateQr = useCallback(async () => {
         setIsGenerating(true);
         setError("");
@@ -360,6 +402,33 @@ export default function Dashboard() {
                                 </div>
                             )}
                         </div>
+
+                        {/* LIVE FEED HEALTH */}
+                        {/* Without this the page lies: the socket is dead, but the
+                            screen looks exactly like a healthy one. Amber rather
+                            than red on purpose - the gym still works, only the
+                            instant feedback is missing. */}
+                        {wsStatus !== "OPEN" && (
+                            <div className="mb-4 inline-flex items-center gap-2 bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 px-4 py-2 rounded-full border border-amber-200 dark:border-amber-800 text-sm font-bold">
+                                {wsStatus === "CONNECTING" ? (
+                                    <>
+                                        <span className="relative flex h-2.5 w-2.5">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                                        </span>
+                                        <span>Reconnecting to live feed...</span>
+                                    </>
+                                ) : (
+                                    // CLOSED here means the hook gave up, which only
+                                    // happens on close code 1008 - an expired or
+                                    // missing session. Retrying cannot fix that.
+                                    <>
+                                        <span className="h-2.5 w-2.5 rounded-full bg-amber-500"></span>
+                                        <span>Live feed offline - refresh the page</span>
+                                    </>
+                                )}
+                            </div>
+                        )}
 
                         <h2 className="text-3xl font-black text-gray-900 dark:text-white mb-2">
                             {physicalStatus === "INSIDE" ? "Ready to leave?" : "Enter the Gym"}
