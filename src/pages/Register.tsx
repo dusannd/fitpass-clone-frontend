@@ -9,6 +9,41 @@ import { api } from "../api/axios";
 const FEATURE_RECAPTCHA = import.meta.env.VITE_FEATURE_RECAPTCHA === "true";
 const SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY || "";
 
+/**
+ * Scores a password from 0 (unusable) to 4 (strong).
+ *
+ * Deliberately a ladder, not a sum of independent points: every level has to clear
+ * the one below it first. An additive score lets "AAAAAAAA" tie with "aB", because
+ * length and variety count the same there. Here length is the floor, and variety
+ * only lifts a password that is already long enough to be worth lifting.
+ *
+ * Lives outside the component because it depends on nothing but its argument -
+ * rebuilding it on every keystroke would buy nothing, and keeping it out here is
+ * what keeps the component itself pure.
+ */
+function calculatePasswordScore(password: string): number {
+    // 1. Below the minimum the form already blocks - nothing to grade yet.
+    if (password.length < 6) return 0;
+
+    // 2. Long enough to submit, short enough to brute-force.
+    if (password.length < 8) return 1;
+
+    const hasLower = /[a-z]/.test(password);
+    const hasUpper = /[A-Z]/.test(password);
+    const hasNumber = /[0-9]/.test(password);
+    // Anything that is not a letter or a digit counts. The old check listed
+    // !@#$%^&* by hand and so ignored _, -, . and +, which are just as common.
+    const hasSpecial = /[^A-Za-z0-9]/.test(password);
+
+    // 3. Long, but written in a single alphabet - a dictionary word survives here.
+    if (!hasLower || !hasUpper) return 2;
+
+    // 4. Mixed case, but nothing to break the words up for a cracking dictionary.
+    if (!hasNumber || !hasSpecial) return 3;
+
+    return 4;
+}
+
 export default function Register() {
     const navigate = useNavigate();
 
@@ -17,6 +52,7 @@ export default function Register() {
     const [lastName, setLastName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const [extraInfo, setExtraInfo] = useState(""); // HONEYPOT FIELD
 
     // --- OPTIONAL PROFILE FIELDS ---
@@ -33,36 +69,31 @@ export default function Register() {
     const [resendMessage, setResendMessage] = useState("");
 
     // --- VALIDATION & STRENGTH STATE ---
-    const [validationErrors, setValidationErrors] = useState({ email: "", password: "", name: "" });
-    const [passwordScore, setPasswordScore] = useState(0);
+    const [validationErrors, setValidationErrors] = useState({ email: "", password: "", confirmPassword: "", name: "" });
+
+    // Derived, not stored: the score is a pure function of the password, so a second
+    // piece of state could only ever drift out of sync with it.
+    const passwordScore = calculatePasswordScore(password);
 
     // reCAPTCHA Reference
     const recaptchaRef = useRef<ReCAPTCHA>(null);
 
 
 
-    // --- PASSWORD STRENGTH LOGIC ---
-    const calculateStrength = (pass: string) => {
-        let score = 0;
-        if (!pass) return 0;
-        if (pass.length >= 8) score += 1;
-        if (/[A-Z]/.test(pass)) score += 1;
-        if (/[a-z]/.test(pass)) score += 1;
-        if (/[0-9!@#$%^&*]/.test(pass)) score += 1;
-        return score;
-    };
-
+    // --- PASSWORD INPUT ---
     const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setPassword(val);
-        setPasswordScore(calculateStrength(val));
-        if (validationErrors.password) setValidationErrors({ ...validationErrors, password: "" });
+        setPassword(e.target.value);
+        // Editing the password can also resolve a mismatch, so clear both errors -
+        // otherwise "Passwords do not match" lingers on a pair that now matches.
+        if (validationErrors.password || validationErrors.confirmPassword) {
+            setValidationErrors({ ...validationErrors, password: "", confirmPassword: "" });
+        }
     };
 
     // --- CLIENT-SIDE VALIDATION ---
     const validateForm = () => {
         let isValid = true;
-        const errors = { email: "", password: "", name: "" };
+        const errors = { email: "", password: "", confirmPassword: "", name: "" };
 
         if (!firstName.trim() || !lastName.trim()) {
             errors.name = "First and last name are required.";
@@ -80,6 +111,15 @@ export default function Register() {
             isValid = false;
         }
 
+        // Compared exactly as typed. Trimming here would accept a password the user
+        // cannot retype, because the password field is not trimmed on submit either.
+        // Checked independently of the length rule, so a password that is both short
+        // and mistyped reports both problems on the same submit.
+        if (password !== confirmPassword) {
+            errors.confirmPassword = "Passwords do not match.";
+            isValid = false;
+        }
+
         setValidationErrors(errors);
         return isValid;
     };
@@ -89,11 +129,36 @@ export default function Register() {
         e.preventDefault();
         setError("");
 
+        // --- 1. GUARD: RECAPTCHA IS TURNED ON BUT NOT CONFIGURED ---
+        // The widget further down only renders when the flag AND the key are both
+        // set, so an empty key leaves recaptchaRef.current null, the POST goes out
+        // with no token, and the backend answers 400 "Token is missing" - which the
+        // form shows verbatim and which reads to the user as an accusation. Stop
+        // here instead, before the request, where we can name the real cause.
+        if (FEATURE_RECAPTCHA && !SITE_KEY) {
+            console.error(
+                "reCAPTCHA is enabled (VITE_FEATURE_RECAPTCHA=true) but VITE_RECAPTCHA_SITE_KEY is empty. "
+                + "Registration cannot succeed until the build environment provides the key."
+            );
+            setError("Configuration Error: reCAPTCHA is enabled but SITE_KEY is missing. Please check your build environment variables.");
+            return;
+        }
+
         if (!validateForm()) return;
 
         setIsLoading(true);
 
         try {
+            // --- 2. GUARD: CONFIGURED, BUT THE WIDGET NEVER LOADED ---
+            // The same silent failure from the other direction: an ad blocker or a
+            // dead connection can stop Google's script, so the ref stays null even
+            // though the key is fine. This one is the user's to fix, not the
+            // developer's, so the message names their fix instead of an env var.
+            if (FEATURE_RECAPTCHA && !recaptchaRef.current) {
+                setError("Security check failed to load. Disable your ad blocker or check your connection, then refresh the page.");
+                return;
+            }
+
             let recaptchaToken = null;
 
             if (FEATURE_RECAPTCHA && recaptchaRef.current) {
@@ -293,10 +358,29 @@ export default function Register() {
                                     <div className={`h-full transition-all duration-300 ${passwordScore >= 4 ? 'w-1/4 bg-green-500' : 'w-0'}`}></div>
                                 </div>
                                 <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mt-1.5 text-right">
-                                    {passwordScore === 0 ? "" : passwordScore === 1 ? "Weak" : passwordScore === 2 ? "Fair" : passwordScore === 3 ? "Good" : "Strong"}
+                                    {passwordScore === 0 ? "Too short" : passwordScore === 1 ? "Weak" : passwordScore === 2 ? "Fair" : passwordScore === 3 ? "Good" : "Strong"}
                                 </p>
                             </div>
                         )}
+                    </div>
+
+                    {/* CONFIRM PASSWORD */}
+                    <div>
+                        <label htmlFor="confirmPassword" className="block text-sm font-bold text-gray-700 mb-1.5">Confirm Password</label>
+                        <input
+                            id="confirmPassword"
+                            type="password"
+                            value={confirmPassword}
+                            onChange={(e) => {
+                                setConfirmPassword(e.target.value);
+                                if (validationErrors.confirmPassword) setValidationErrors({ ...validationErrors, confirmPassword: "" });
+                            }}
+                            disabled={isLoading}
+                            aria-invalid={!!validationErrors.confirmPassword}
+                            className={`w-full border ${validationErrors.confirmPassword ? 'border-red-500' : 'border-gray-300'} bg-gray-50 p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all`}
+                            placeholder="Repeat your password"
+                        />
+                        {validationErrors.confirmPassword && <p className="text-red-500 text-xs font-bold mt-1">{validationErrors.confirmPassword}</p>}
                     </div>
 
                     {/* OPTIONAL PROFILE (bio + goals) */}
