@@ -4,45 +4,11 @@ import { useNavigate, Link } from "react-router-dom";
 import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
 import { api } from "../api/axios";
+import PasswordStrengthMeter from "../components/PasswordStrengthMeter";
 
 // Read environment variables
 const FEATURE_RECAPTCHA = import.meta.env.VITE_FEATURE_RECAPTCHA === "true";
 const SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY || "";
-
-/**
- * Scores a password from 0 (unusable) to 4 (strong).
- *
- * Deliberately a ladder, not a sum of independent points: every level has to clear
- * the one below it first. An additive score lets "AAAAAAAA" tie with "aB", because
- * length and variety count the same there. Here length is the floor, and variety
- * only lifts a password that is already long enough to be worth lifting.
- *
- * Lives outside the component because it depends on nothing but its argument -
- * rebuilding it on every keystroke would buy nothing, and keeping it out here is
- * what keeps the component itself pure.
- */
-function calculatePasswordScore(password: string): number {
-    // 1. Below the minimum the form already blocks - nothing to grade yet.
-    if (password.length < 6) return 0;
-
-    // 2. Long enough to submit, short enough to brute-force.
-    if (password.length < 8) return 1;
-
-    const hasLower = /[a-z]/.test(password);
-    const hasUpper = /[A-Z]/.test(password);
-    const hasNumber = /[0-9]/.test(password);
-    // Anything that is not a letter or a digit counts. The old check listed
-    // !@#$%^&* by hand and so ignored _, -, . and +, which are just as common.
-    const hasSpecial = /[^A-Za-z0-9]/.test(password);
-
-    // 3. Long, but written in a single alphabet - a dictionary word survives here.
-    if (!hasLower || !hasUpper) return 2;
-
-    // 4. Mixed case, but nothing to break the words up for a cracking dictionary.
-    if (!hasNumber || !hasSpecial) return 3;
-
-    return 4;
-}
 
 export default function Register() {
     const navigate = useNavigate();
@@ -70,10 +36,6 @@ export default function Register() {
 
     // --- VALIDATION & STRENGTH STATE ---
     const [validationErrors, setValidationErrors] = useState({ email: "", password: "", confirmPassword: "", name: "" });
-
-    // Derived, not stored: the score is a pure function of the password, so a second
-    // piece of state could only ever drift out of sync with it.
-    const passwordScore = calculatePasswordScore(password);
 
     // reCAPTCHA Reference
     const recaptchaRef = useRef<ReCAPTCHA>(null);
@@ -349,19 +311,7 @@ export default function Register() {
                         {validationErrors.password && <p className="text-red-500 text-xs font-bold mt-1">{validationErrors.password}</p>}
 
                         {/* STRENGTH METER UI */}
-                        {password.length > 0 && (
-                            <div className="mt-3">
-                                <div className="flex gap-1 h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-                                    <div className={`h-full transition-all duration-300 ${passwordScore >= 1 ? 'w-1/4 bg-red-500' : 'w-0'}`}></div>
-                                    <div className={`h-full transition-all duration-300 ${passwordScore >= 2 ? 'w-1/4 bg-orange-400' : 'w-0'}`}></div>
-                                    <div className={`h-full transition-all duration-300 ${passwordScore >= 3 ? 'w-1/4 bg-yellow-400' : 'w-0'}`}></div>
-                                    <div className={`h-full transition-all duration-300 ${passwordScore >= 4 ? 'w-1/4 bg-green-500' : 'w-0'}`}></div>
-                                </div>
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mt-1.5 text-right">
-                                    {passwordScore === 0 ? "Too short" : passwordScore === 1 ? "Weak" : passwordScore === 2 ? "Fair" : passwordScore === 3 ? "Good" : "Strong"}
-                                </p>
-                            </div>
-                        )}
+                        <PasswordStrengthMeter password={password} />
                     </div>
 
                     {/* CONFIRM PASSWORD */}
