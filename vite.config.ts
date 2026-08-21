@@ -1,4 +1,6 @@
-import { defineConfig } from 'vite'
+// `vitest/config` re-exports Vite's own defineConfig with the `test` key added to
+// its type. The old `/// <reference types="vitest" />` trick was removed in Vitest 3.
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 
@@ -20,5 +22,20 @@ export default defineConfig({
         ws: true, // Proxy WebSockets too!
       }
     }
-  }
+  },
+  test: {
+    // jsdom, not the real browser: these tests never need a camera or a canvas.
+    environment: 'jsdom',
+    // Registers the jest-dom matchers once, for every file.
+    setupFiles: ['./src/setupTests.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
+    // Undo every vi.spyOn between tests, so one file's mock can't leak into the next.
+    restoreMocks: true,
+    // Pin the feature flags the app reads at import time. Without this the suite would
+    // pick up whatever sits in the git-ignored .env - green here, red on a machine
+    // that has reCAPTCHA switched on (and a real network call to Google).
+    env: {
+      VITE_FEATURE_RECAPTCHA: 'false',
+    },
+  },
 })
