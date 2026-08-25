@@ -2,9 +2,45 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>fitpass-clone-frontend</title>
+
+    <!-- 1. What a browser tab, a bookmark and a search result headline show. -->
+    <title>FitPass Clone | Premium Gym Access</title>
+    <meta
+      name="description"
+      content="Gym management for members, trainers, staff and owners. QR turnstile access, workout tracking, coaching plans and subscriptions in one app."
+    />
+
+    <!-- 2. Icons. The SVG favicon covers desktop browsers; iOS ignores SVG for a
+         home-screen icon and needs a PNG, so apple-touch-icon points at one. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- 3. Tints the Android Chrome address bar. Matches the blue-600 accent the
+         rest of the app is built on. -->
+    <meta name="theme-color" content="#2563eb" />
+
+    <!-- 4. Link previews in WhatsApp, Slack, LinkedIn and friends.
+         TWO THINGS ARE STILL MISSING HERE, both deliberate:
+
+         a) /banner.png and /apple-touch-icon.png do not exist yet. Drop them into
+            public/ under exactly those names and they start working with no edit
+            here. See assets/README.md for the sizes (banner ~1200x630, touch icon
+            180x180). Until then those two URLs 404 and a shared link renders with
+            no image; every other tag below already works.
+
+         b) og:image must be an ABSOLUTE url — crawlers do not resolve a relative
+            path. The production domain is not decided yet, so this stays relative
+            for now. Prefix both og:url and og:image with the real origin at deploy
+            time, e.g. https://fitpass.example.com/banner.png -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="FitPass Clone | Premium Gym Access" />
+    <meta
+      property="og:description"
+      content="Gym management for members, trainers, staff and owners. QR turnstile access, workout tracking, coaching plans and subscriptions in one app."
+    />
+    <meta property="og:image" content="/banner.png" />
+    <meta name="twitter:card" content="summary_large_image" />
   </head>
   <body>
     <div id="root"></div>
