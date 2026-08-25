@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import axios from "axios";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 import {
     activePerks,
     billingCycleProgress,
@@ -21,15 +21,6 @@ import {
 // function. It has to travel WITH the data because a clock read during render makes
 // the component impure - the same reasoning as InsidePage in WorkerDashboard.
 type ActiveSubscription = MySubscription & { fetchedAt: number };
-
-/** Pulls the backend's `detail` out of an axios error, with a readable fallback. */
-function errorDetail(err: unknown, fallback: string): string {
-    if (axios.isAxiosError(err)) {
-        const detail = err.response?.data?.detail;
-        if (typeof detail === "string") return detail;
-    }
-    return fallback;
-}
 
 export default function Subscriptions() {
     const navigate = useNavigate();

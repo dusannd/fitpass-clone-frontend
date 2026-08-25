@@ -1,35 +1,47 @@
-import { useEffect, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/axios";
+import { errorDetail } from "../utils/errors";
 
 export default function VerifyEmail() {
     const [searchParams] = useSearchParams();
     const token = searchParams.get("token"); // Extracts "?token=..." from the URL
 
-    const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
-    const [message, setMessage] = useState("");
+    // --- 1. THE VERIFICATION CALL ---
+    // The token is passed through `params` rather than glued into the string, so a
+    // token containing & or # cannot truncate the query on the way out.
+    const { data, error, isPending } = useQuery({
+        queryKey: ["verify-email", token],
+        queryFn: async () => {
+            const response = await api.get<{ message?: string }>("/users/verify-email", {
+                params: { token },
+            });
+            return response.data;
+        },
+        // No token in the URL means there is nothing to ask the backend about.
+        enabled: !!token,
+        // An expired or already-used token is a permanent answer. Retrying it just
+        // makes the user watch a spinner before the same failure arrives.
+        retry: false,
+    });
 
-    useEffect(() => {
-        if (!token) {
-            setStatus("error");
-            setMessage("No verification token found in URL.");
-            return;
-        }
+    // --- 2. WHICH OF THE THREE SCREENS TO SHOW ---
+    // Order matters. A missing token has to be checked first: with `enabled: false`
+    // the query never runs, so isPending would otherwise stay true forever and the
+    // page would spin on a broken link instead of explaining what is wrong.
+    const status = !token
+        ? "error"
+        : isPending
+          ? "loading"
+          : error
+            ? "error"
+            : "success";
 
-        // Call the backend to verify the token
-        const verifyAccount = async () => {
-            try {
-                const response = await api.get(`/users/verify-email?token=${token}`);
-                setStatus("success");
-                setMessage(response.data.message || "Email successfully verified!");
-            } catch (err: any) {
-                setStatus("error");
-                setMessage(err.response?.data?.detail || "Verification failed. Link may be expired.");
-            }
-        };
-
-        verifyAccount();
-    }, [token]);
+    const message = !token
+        ? "No verification token found in URL."
+        : error
+          ? errorDetail(error, "Verification failed. Link may be expired.")
+          : (data?.message ?? "Email successfully verified!");
 
     return (
         <div className="flex h-screen items-center justify-center bg-gray-100">

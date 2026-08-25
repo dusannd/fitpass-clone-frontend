@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useOutletContext, Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { QRCodeSVG } from "qrcode.react";
 import axios from "axios";
 import { api } from "../api/axios";
@@ -17,6 +17,13 @@ interface QrState {
     expiresAt: number;
     actionType: "ENTRY" | "EXIT";
     cooldownEndsAt: number;
+}
+
+// GET /access/my-status. Mirrors the backend Pydantic schema 1:1 - entered_at is
+// null whenever the member is OUTSIDE, so it has to be nullable here too.
+interface AccessStatus {
+    status: "INSIDE" | "OUTSIDE";
+    entered_at: string | null;
 }
 
 // The turnstile event the backend pushes over the socket. The hook hands
@@ -82,8 +89,6 @@ export default function Dashboard() {
     }, []);
 
     // --- REAL-TIME STATUS STATE ---
-    const [physicalStatus, setPhysicalStatus] = useState<"INSIDE" | "OUTSIDE" | "LOADING">("LOADING");
-    const [enteredAt, setEnteredAt] = useState<string | null>(null);
     const [sessionDuration, setSessionDuration] = useState<string>("");
 
     // --- QR STATE WITH LAZY INITIALIZATION ---
@@ -112,20 +117,23 @@ export default function Dashboard() {
     const hasConnectedRef = useRef(false);
 
     // --- 1. FETCH PHYSICAL STATUS ---
-    const fetchStatus = useCallback(async () => {
-        if (!isMember) return;
-        try {
-            const res = await api.get("/access/my-status");
-            setPhysicalStatus(res.data.status);
-            setEnteredAt(res.data.entered_at);
-        } catch (err) {
-            console.error("Failed to fetch physical status", err);
-        }
-    }, [isMember]);
+    // Is the member currently inside the gym, and since when. The whole QR panel
+    // below keys off this: OUTSIDE offers an ENTRY code, INSIDE an EXIT one.
+    const { data: accessStatus, refetch: refetchStatus } = useQuery({
+        queryKey: ["access", "my-status"],
+        queryFn: async () => {
+            const res = await api.get<AccessStatus>("/access/my-status");
+            return res.data;
+        },
+        // Only members have a physical status; a trainer-only account has nothing
+        // to ask about here.
+        enabled: isMember,
+    });
 
-    useEffect(() => {
-        void fetchStatus();
-    }, [fetchStatus]);
+    // Before the first response lands there is no honest answer yet, and the panel
+    // stays hidden rather than guessing OUTSIDE and offering the wrong QR code.
+    const physicalStatus: "INSIDE" | "OUTSIDE" | "LOADING" = accessStatus?.status ?? "LOADING";
+    const enteredAt = accessStatus?.entered_at ?? null;
 
     // --- 2. SESSION DURATION TIMER ---
     useEffect(() => {
@@ -212,7 +220,7 @@ export default function Dashboard() {
             setQrToken("");
             setTimeLeft(0);
             localStorage.removeItem(STORAGE_KEY);
-            void fetchStatus();
+            void refetchStatus();
         }
 
         if (data.access_granted) {
@@ -225,7 +233,7 @@ export default function Dashboard() {
             localStorage.removeItem(STORAGE_KEY);
 
             // Refresh physical state (Transforms Check-In to Check-Out UI)
-            void fetchStatus();
+            void refetchStatus();
 
             setTimeout(() => {
                 setAccessGranted(false);
@@ -246,20 +254,20 @@ export default function Dashboard() {
     // pushes them to a connection that no longer exists and nothing replays them.
     // So a member could be checked out at the desk during the outage and still see
     // "You are inside" after reconnecting. Refetching once on the way back from a
-    // drop closes that gap. The very first connection is skipped, because effect 1
-    // has already fetched the status on mount.
+    // drop closes that gap. The very first connection is skipped, because the
+    // status query has already fetched on mount.
     useEffect(() => {
         if (wsStatus !== "OPEN") return;
 
-        // First time we ever connect: effect 1 already fetched the status on
-        // mount, so a second request here would be pure duplication.
+        // First time we ever connect: the status query already fetched on mount,
+        // so a second request here would be pure duplication.
         if (!hasConnectedRef.current) {
             hasConnectedRef.current = true;
             return;
         }
 
-        void fetchStatus();
-    }, [wsStatus, fetchStatus]);
+        void refetchStatus();
+    }, [wsStatus, refetchStatus]);
 
     // --- 6. QR GENERATION ---
     const handleGenerateQr = useCallback(async () => {
