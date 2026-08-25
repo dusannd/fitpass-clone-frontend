@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/axios";
 import Avatar from "./Avatar";
+import RouteFallback from "./RouteFallback";
 
 
 export interface Role {
@@ -373,8 +374,16 @@ export default function Layout() {
 
                 {/* PAGE CONTENT */}
                 <div className="flex-1 p-4 sm:p-6 overflow-auto">
-                    {/* Prosleđujemo celu user strukturu (uključujući pretplate) deci rutama */}
-                    <Outlet context={user} />
+                    {/*
+                      Prosleđujemo celu user strukturu (uključujući pretplate) deci rutama.
+
+                      The Suspense boundary sits here rather than around the whole app so
+                      a lazily-loaded page swaps out only the content area - the sidebar
+                      and header stay put instead of the screen going blank mid-navigation.
+                    */}
+                    <Suspense fallback={<RouteFallback />}>
+                        <Outlet context={user} />
+                    </Suspense>
                 </div>
             </main>
         </div>
