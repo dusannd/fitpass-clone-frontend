@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
-import axios from "axios";
+import { useState, useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 import { ProgressCard } from "../../components/ProgressCard";
 import LiveWorkoutModal from "../../components/LiveWorkoutModal";
 import SessionDetailModal from "../../components/SessionDetailModal";
@@ -63,21 +64,13 @@ const CARD_BADGE: Record<PlanCardType, { label: string; className: string }> = {
 
 export default function Workouts() {
     // --- STATE ---
+    const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState<"explore" | "my_plans" | "history">("my_plans");
-    const [loading, setLoading] = useState(true);
-
-    const [savedPlans, setSavedPlans] = useState<WorkoutPlan[]>([]);
-    const [privatePlans, setPrivatePlans] = useState<WorkoutPlan[]>([]);
-    const [history, setHistory] = useState<WorkoutSession[]>([]);
-
-    // Who is coaching this member, for the chip in the page header.
-    const [coachingLinks, setCoachingLinks] = useState<CoachingLink[]>([]);
 
     // --- EXPLORE (LAZY) ---
     // We hold the trainer list, and each trainer's plans only once somebody asks for
     // them. A key present in trainerPlans means "already fetched", which is what stops
     // a second expand from hitting the network again.
-    const [trainers, setTrainers] = useState<Trainer[]>([]);
     const [trainerPlans, setTrainerPlans] = useState<Record<number, WorkoutPlan[]>>({});
     const [expandedTrainers, setExpandedTrainers] = useState<number[]>([]);
     const [loadingTrainerId, setLoadingTrainerId] = useState<number | null>(null);
@@ -91,43 +84,68 @@ export default function Workouts() {
     const [removedPlan, setRemovedPlan] = useState<RemovedPlan | null>(null);
 
     // --- DATA FETCHING ---
-    /**
-     * Everything the page needs to render itself, and nothing more.
-     *
-     * The trainers' plans are deliberately NOT fetched here. This used to walk the
-     * trainer list and fire one request per trainer, so opening the page - or any
-     * refresh after following or removing a plan - hit the API once per trainer in the
-     * gym. Those now load one at a time, only when a member opens that trainer's card.
-     */
-    const fetchAllData = useCallback(async () => {
-        setLoading(true);
-        try {
-            // Five independent reads, so they travel together instead of in a queue.
-            // The coaching one only feeds the header chip, so it fails soft - a member
-            // with no trainer must still get their whole Workout Center.
-            const [histRes, savedRes, privateRes, trainersRes, coachingRes] = await Promise.all([
-                api.get<WorkoutSession[]>("/workouts/history"),
-                api.get<WorkoutPlan[]>("/workouts/my-plans"),
-                api.get<WorkoutPlan[]>("/workouts/my-private-plans"),
-                api.get<Trainer[]>("/workouts/trainers"),
-                api.get<CoachingLink[]>("/coaching/my-trainers").catch(() => null),
-            ]);
+    /*
+      Five independent reads, one query each. They used to share a single Promise.all,
+      which meant the slowest of the five decided when ANY of them appeared, and one
+      failure blanked the whole page. Separately, each pane fills in as it arrives.
 
-            setHistory(histRes.data);
-            setSavedPlans(savedRes.data);
-            setPrivatePlans(privateRes.data);
-            setTrainers(trainersRes.data);
-            if (coachingRes) setCoachingLinks(coachingRes.data);
-        } catch (err) {
-            console.error("Failed to load workout data", err);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
+      The trainers' plans are deliberately NOT fetched here. This used to walk the
+      trainer list and fire one request per trainer, so opening the page - or any
+      refresh after following or removing a plan - hit the API once per trainer in the
+      gym. Those still load one at a time, only when a member opens that trainer's card.
+    */
+    const historyQuery = useQuery({
+        queryKey: ["workouts", "history"],
+        queryFn: async () => (await api.get<WorkoutSession[]>("/workouts/history")).data,
+    });
 
-    useEffect(() => {
-        void fetchAllData();
-    }, [fetchAllData]);
+    const savedPlansQuery = useQuery({
+        queryKey: ["workouts", "my-plans"],
+        queryFn: async () => (await api.get<WorkoutPlan[]>("/workouts/my-plans")).data,
+    });
+
+    const privatePlansQuery = useQuery({
+        queryKey: ["workouts", "my-private-plans"],
+        queryFn: async () => (await api.get<WorkoutPlan[]>("/workouts/my-private-plans")).data,
+    });
+
+    const trainersQuery = useQuery({
+        queryKey: ["workouts", "trainers"],
+        queryFn: async () => (await api.get<Trainer[]>("/workouts/trainers")).data,
+    });
+
+    // This one only feeds the header chip, so it is allowed to fail on its own: a
+    // member with no trainer must still get their whole Workout Center.
+    const coachingQuery = useQuery({
+        queryKey: ["coaching", "my-trainers"],
+        queryFn: async () => (await api.get<CoachingLink[]>("/coaching/my-trainers")).data,
+    });
+
+    const history = historyQuery.data ?? [];
+    const trainers = trainersQuery.data ?? [];
+    const coachingLinks = coachingQuery.data ?? [];
+
+    // These two feed the useMemos further down. Written as a bare `?? []` they would
+    // hand those a brand new array on every render while the query is still pending,
+    // and the memo would recompute every time - which is the whole thing it exists
+    // to avoid.
+    const savedPlans = useMemo(() => savedPlansQuery.data ?? [], [savedPlansQuery.data]);
+    const privatePlans = useMemo(() => privatePlansQuery.data ?? [], [privatePlansQuery.data]);
+
+    // Anything the member's library is built from has to be here before the tabs make
+    // sense. The coaching chip is not on this list - it degrades to "no trainer".
+    const loading =
+        historyQuery.isPending ||
+        savedPlansQuery.isPending ||
+        privatePlansQuery.isPending ||
+        trainersQuery.isPending;
+
+    // Every write on this page invalidates the same prefix. The trainer plan cards are
+    // untouched by it on purpose - they live outside this key and are still cached by
+    // the expand-once logic below.
+    const refreshWorkouts = async () => {
+        await queryClient.invalidateQueries({ queryKey: ["workouts"] });
+    };
 
     // --- EXPLORE: ONE TRAINER AT A TIME ---
     const loadTrainerPlans = async (trainerId: number) => {
@@ -157,17 +175,15 @@ export default function Workouts() {
     };
 
     // --- ACTIONS ---
-    const handleFollowPlan = async (planId: number) => {
-        try {
+    const followPlan = useMutation({
+        mutationFn: async (planId: number) => {
             await api.post(`/workouts/${planId}/follow`);
-            await fetchAllData();
+        },
+        onSuccess: async () => {
+            await refreshWorkouts();
             setActiveTab("my_plans");
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                window.alert(err.response?.data?.detail || "Failed to follow plan.");
-            }
-        }
-    };
+        },
+    });
 
     /**
      * Takes a plan out of the member's library.
@@ -176,44 +192,53 @@ export default function Workouts() {
      * unfollowed, while an assigned one is only hidden - it belongs to the trainer, who
      * keeps their copy no matter what the member does here.
      */
-    const removePlan = async (plan: WorkoutPlan, type: PlanCardType) => {
-        try {
+    const removePlanMutation = useMutation({
+        mutationFn: async ({ plan, type }: RemovedPlan) => {
             if (type === "assigned") await api.post(`/workouts/${plan.id}/dismiss`);
             else await api.delete(`/workouts/${plan.id}/follow`);
+        },
+        onSuccess: async (_data, variables) => {
+            // Only offer the undo once the server has actually accepted the removal.
+            setRemovedPlan(variables);
+            await refreshWorkouts();
+        },
+    });
 
-            setRemovedPlan({ plan, type });
-            await fetchAllData();
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                window.alert(err.response?.data?.detail || "Failed to remove plan.");
-            }
-        }
-    };
-
-    // Exact inverse of removePlan, driven by the undo bar.
-    const undoRemove = async () => {
-        if (!removedPlan) return;
-        const { plan, type } = removedPlan;
-
-        try {
+    // Exact inverse of removePlanMutation, driven by the undo bar.
+    const undoRemoveMutation = useMutation({
+        mutationFn: async ({ plan, type }: RemovedPlan) => {
             if (type === "assigned") await api.delete(`/workouts/${plan.id}/dismiss`);
             else await api.post(`/workouts/${plan.id}/follow`);
-
+        },
+        onSuccess: async () => {
             setRemovedPlan(null);
-            await fetchAllData();
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                window.alert(err.response?.data?.detail || "Failed to restore plan.");
-            }
-        }
+            await refreshWorkouts();
+        },
+    });
+
+    const removePlan = (plan: WorkoutPlan, type: PlanCardType) =>
+        removePlanMutation.mutate({ plan, type });
+
+    const undoRemove = () => {
+        if (removedPlan) undoRemoveMutation.mutate(removedPlan);
     };
 
     // The modal owns the logging itself, we only refresh and switch to the history tab.
     const handleWorkoutSaved = async () => {
         setActiveWorkout(null);
-        await fetchAllData();
+        await refreshWorkouts();
         setActiveTab("history");
     };
+
+    // One banner for the three writes. These used to be window.alert(), which blocks
+    // the page and looks nothing like the rest of the app.
+    const actionError =
+        followPlan.error || removePlanMutation.error || undoRemoveMutation.error
+            ? errorDetail(
+                  followPlan.error ?? removePlanMutation.error ?? undoRemoveMutation.error,
+                  "That action could not be completed.",
+              )
+            : "";
 
     // --- RENDER HELPERS ---
     // Every plan on the page goes through here, assigned ones included. They are ordinary
@@ -257,7 +282,7 @@ export default function Workouts() {
                 <div className="pl-2">
                     {type === "explore" ? (
                         <button
-                            onClick={() => void handleFollowPlan(plan.id)}
+                            onClick={() => followPlan.mutate(plan.id)}
                             className="w-full bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-900 dark:text-white font-bold py-2.5 rounded-xl transition-colors"
                         >
                             Save & Follow Plan
@@ -277,7 +302,7 @@ export default function Workouts() {
                                 Start Workout 🚀
                             </button>
                             <button
-                                onClick={() => void removePlan(plan, type)}
+                                onClick={() => removePlan(plan, type)}
                                 title={type === "assigned" ? "Hide this plan" : "Remove from My Plans"}
                                 aria-label={type === "assigned" ? `Hide ${plan.name}` : `Remove ${plan.name} from My Plans`}
                                 className="shrink-0 w-11 bg-gray-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/50 text-gray-400 hover:text-rose-600 dark:hover:text-rose-400 font-bold rounded-xl transition-colors"
@@ -339,6 +364,12 @@ export default function Workouts() {
                 <MyTrainerChip links={coachingLinks} showEmptyState />
             </div>
 
+            {actionError && (
+                <div className="mb-4 bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 p-4 rounded-xl font-bold text-sm border border-red-200 dark:border-red-800">
+                    {actionError}
+                </div>
+            )}
+
             {/*
               UNDO BAR
               Removing a plan is one tap, so putting it back has to be one tap too. This is
@@ -352,7 +383,7 @@ export default function Workouts() {
                     </p>
                     <div className="flex items-center gap-2">
                         <button
-                            onClick={() => void undoRemove()}
+                            onClick={() => undoRemove()}
                             className="bg-white/10 hover:bg-white/20 text-white text-xs font-black uppercase tracking-wide px-4 py-2 rounded-lg transition-colors"
                         >
                             Undo

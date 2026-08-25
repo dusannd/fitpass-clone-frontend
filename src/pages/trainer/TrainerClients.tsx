@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
+import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 import Avatar from "../../components/Avatar";
 import { ProgressCard } from "../../components/ProgressCard";
 import { parseGoals } from "../../utils/profile";
@@ -26,60 +27,63 @@ interface CoachingLink {
 
 export default function TrainerClients() {
     const navigate = useNavigate();
-    const [requests, setRequests] = useState<CoachingLink[]>([]);
-    const [activeClients, setActiveClients] = useState<CoachingLink[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState("");
+    const queryClient = useQueryClient();
     const [successMsg, setSuccessMsg] = useState("");
 
     // --- PROGRESS MODAL ---
-    // Which client we are inspecting, plus their history. Kept out of the card list so
-    // opening the modal never refetches the clients themselves.
+    // Which client we are inspecting. Their history hangs off this in its own query,
+    // so opening the modal never refetches the client list behind it.
     const [progressClient, setProgressClient] = useState<ClientInfo | null>(null);
-    const [progressSessions, setProgressSessions] = useState<WorkoutSession[]>([]);
-    const [progressLoading, setProgressLoading] = useState(false);
-    const [progressError, setProgressError] = useState("");
 
-    const fetchData = async () => {
-        try {
-            const [pendingRes, activeRes] = await Promise.all([
-                api.get("/coaching/requests"),
-                api.get("/coaching/clients"),
-            ]);
-            setRequests(pendingRes.data);
-            setActiveClients(activeRes.data);
-        } catch {
-            setError("Failed to load coaching data.");
-        } finally {
-            setLoading(false);
-        }
-    };
+    // --- 1. THE TWO LISTS ---
+    // Two queries rather than one Promise.all: pending requests and active clients
+    // are separate endpoints, and pairing them meant the slower one held up the
+    // other and a single failure blanked both.
+    const requestsQuery = useQuery({
+        queryKey: ["trainer", "requests"],
+        queryFn: async () => {
+            const res = await api.get<CoachingLink[]>("/coaching/requests");
+            return res.data;
+        },
+    });
 
-    useEffect(() => {
-        void fetchData();
-    }, []);
+    const clientsQuery = useQuery({
+        queryKey: ["trainer", "clients"],
+        queryFn: async () => {
+            const res = await api.get<CoachingLink[]>("/coaching/clients");
+            return res.data;
+        },
+    });
 
-    // --- PROGRESS MODAL ACTIONS ---
-    const openProgress = async (client: ClientInfo) => {
-        setProgressClient(client);
-        setProgressSessions([]);
-        setProgressError("");
-        setProgressLoading(true);
+    const requests = requestsQuery.data ?? [];
+    const activeClients = clientsQuery.data ?? [];
 
-        try {
-            const res = await api.get<WorkoutSession[]>(`/coaching/clients/${client.id}/progress`);
-            setProgressSessions(res.data);
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setProgressError(err.response?.data?.detail || "Failed to load this client's progress.");
-            } else {
-                setProgressError("An error occurred.");
-            }
-        } finally {
-            setProgressLoading(false);
-        }
-    };
+    // --- 2. ONE CLIENT'S WORKOUT HISTORY ---
+    // Keyed by client id, so reopening a client the trainer already looked at shows
+    // the chart straight away instead of a second spinner.
+    // skipToken rather than `enabled`, because it also narrows the type: inside the
+    // queryFn the id is a number, with no non-null assertion to go stale later.
+    const progressClientId = progressClient?.id;
+    const progressQuery = useQuery({
+        queryKey: ["trainer", "client-progress", progressClientId],
+        queryFn:
+            progressClientId === undefined
+                ? skipToken
+                : async () => {
+                      const res = await api.get<WorkoutSession[]>(
+                          `/coaching/clients/${progressClientId}/progress`,
+                      );
+                      return res.data;
+                  },
+    });
 
+    const progressSessions = progressQuery.data ?? [];
+    const progressLoading = !!progressClient && progressQuery.isPending;
+    const progressError = progressQuery.error
+        ? errorDetail(progressQuery.error, "Failed to load this client's progress.")
+        : "";
+
+    const openProgress = (client: ClientInfo) => setProgressClient(client);
     const closeProgress = useCallback(() => setProgressClient(null), []);
 
     // Escape closes the modal, same behaviour as the profile menu in Layout.
@@ -93,23 +97,31 @@ export default function TrainerClients() {
         return () => document.removeEventListener("keydown", handleEscape);
     }, [progressClient, closeProgress]);
 
-    const handleResponse = async (linkId: number, status: "ACCEPTED" | "REJECTED") => {
-        setError("");
-        setSuccessMsg("");
-        try {
+    // --- 3. ACCEPT / REJECT A REQUEST ---
+    const respond = useMutation({
+        mutationFn: async ({ linkId, status }: { linkId: number; status: "ACCEPTED" | "REJECTED" }) => {
             await api.put(`/coaching/requests/${linkId}`, { status });
+            return status;
+        },
+        onMutate: () => setSuccessMsg(""),
+        onSuccess: async (status) => {
             setSuccessMsg(`Request successfully ${status.toLowerCase()}!`);
-            await fetchData();
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Action failed.");
-            } else {
-                setError("An error occurred.");
-            }
-        }
-    };
+            // Accepting moves a row from one list to the other, so both have to go.
+            await queryClient.invalidateQueries({ queryKey: ["trainer"] });
+        },
+    });
 
-    if (loading) return <div className="p-6 text-gray-600 dark:text-gray-300 font-bold">Loading clients...</div>;
+    // One banner for every failure on the page. A load error wins over an action
+    // error - if the lists never arrived, the action error is the lesser problem.
+    const error = requestsQuery.error || clientsQuery.error
+        ? "Failed to load coaching data."
+        : respond.error
+          ? errorDetail(respond.error, "Action failed.")
+          : "";
+
+    if (requestsQuery.isPending || clientsQuery.isPending) {
+        return <div className="p-6 text-gray-600 dark:text-gray-300 font-bold">Loading clients...</div>;
+    }
 
     return (
         <div className="max-w-5xl mx-auto flex flex-col gap-8">
@@ -195,13 +207,13 @@ export default function TrainerClients() {
                                     {/* ACTIONS */}
                                     <div className="flex gap-2 mt-5 pt-4 border-t border-gray-200 dark:border-slate-700">
                                         <button
-                                            onClick={() => void handleResponse(req.id, "ACCEPTED")}
+                                            onClick={() => respond.mutate({ linkId: req.id, status: "ACCEPTED" })}
                                             className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2.5 px-6 rounded-lg transition shadow-sm"
                                         >
                                             Accept
                                         </button>
                                         <button
-                                            onClick={() => void handleResponse(req.id, "REJECTED")}
+                                            onClick={() => respond.mutate({ linkId: req.id, status: "REJECTED" })}
                                             className="flex-1 sm:flex-none bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-200 dark:hover:bg-rose-900/60 text-xs font-bold py-2.5 px-6 rounded-lg transition"
                                         >
                                             Decline
@@ -255,7 +267,7 @@ export default function TrainerClients() {
                                     <div className="flex flex-col sm:flex-row gap-2 mt-4">
                                         {/* See how they are actually lifting, without having to ask them */}
                                         <button
-                                            onClick={() => void openProgress(link.client)}
+                                            onClick={() => openProgress(link.client)}
                                             className="flex-1 bg-white dark:bg-slate-900 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/60 text-xs font-bold py-2.5 rounded-lg transition-colors"
                                         >
                                             📈 View Progress

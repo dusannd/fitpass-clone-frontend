@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import axios from "axios";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 import { WEIGHT_STEP_OPTIONS, DEFAULT_WEIGHT_STEP } from "../../utils/workout";
 
 // --- INTERFACES ---
@@ -126,9 +127,7 @@ export default function TrainerPlans() {
     const location = useLocation();
     const navigate = useNavigate();
 
-    const [plans, setPlans] = useState<WorkoutPlan[]>([]);
-    const [clients, setClients] = useState<ClientInfo[]>([]);
-    const [loading, setLoading] = useState(true);
+    const queryClient = useQueryClient();
 
     // The whole builder lives in one object so persisting it is a single effect
     // instead of one listener per field. restoredFromDraft rides along in the same
@@ -157,29 +156,24 @@ export default function TrainerPlans() {
     const draft = form.draft;
 
     const [message, setMessage] = useState("");
-    const [error, setError] = useState("");
+    const [validationError, setValidationError] = useState("");
 
-    const fetchPlans = async () => {
-        try {
-            // The client list only feeds the assignment dropdown, so it must not be able
-            // to take the form down with it - a trainer with no clients still publishes.
-            const [plansRes, clientsRes] = await Promise.all([
-                api.get<WorkoutPlan[]>("/trainer/plans"),
-                api.get<CoachingLink[]>("/coaching/clients").catch(() => null),
-            ]);
+    const plansQuery = useQuery({
+        queryKey: ["trainer", "plans"],
+        queryFn: async () => (await api.get<WorkoutPlan[]>("/trainer/plans")).data,
+    });
 
-            setPlans(plansRes.data);
-            if (clientsRes) setClients(clientsRes.data.map((link) => link.client));
-        } catch {
-            setError("Failed to load your workout plans.");
-        } finally {
-            setLoading(false);
-        }
-    };
+    // Deliberately its own query, not a Promise.all partner: the client list only feeds
+    // the assignment dropdown and must not be able to take the form down with it - a
+    // trainer with no clients still publishes. Same key as My Clients uses for the same
+    // endpoint, so the two screens share one cached copy.
+    const clientsQuery = useQuery({
+        queryKey: ["trainer", "clients"],
+        queryFn: async () => (await api.get<CoachingLink[]>("/coaching/clients")).data,
+    });
 
-    useEffect(() => {
-        void fetchPlans();
-    }, []);
+    const plans = plansQuery.data ?? [];
+    const clients: ClientInfo[] = (clientsQuery.data ?? []).map((link) => link.client);
 
     // The hand-off was consumed by the state initializer above. Drop it from the history
     // entry so refreshing the page does not re-apply a client the trainer has since
@@ -240,7 +234,7 @@ export default function TrainerPlans() {
             handoffClientName: "",
         });
 
-        setError("");
+        setValidationError("");
         setMessage("Copied into the builder. Pick who it is for, then publish it.");
         window.scrollTo({ top: 0, behavior: "smooth" });
     };
@@ -261,48 +255,63 @@ export default function TrainerPlans() {
         });
     };
 
-    const handleCreatePlan = async (e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
-        setError("");
-        setMessage("");
-
-        if (draft.exercises.length === 0) {
-            return setError("You must add at least one exercise.");
-        }
-        if (draft.exercises.some((ex) => !ex.name || !ex.reps)) {
-            return setError("All exercises must have a name and reps filled out.");
-        }
-
-        try {
+    // The publish itself.
+    const createPlan = useMutation({
+        mutationFn: async () => {
             await api.post("/trainer/plans", {
                 name: draft.name,
                 description: draft.description,
                 client_id: draft.client_id,
                 exercises: draft.exercises,
             });
-
+            return draft.client_id;
+        },
+        onSuccess: async (clientId) => {
             // Only now is the work safe on the server, so this is the ONLY place the
-            // draft gets thrown away. A failed publish below keeps everything.
+            // draft gets thrown away. A failed publish keeps everything.
             localStorage.removeItem(DRAFT_KEY);
             setForm({ draft: emptyDraft(), restoredFromDraft: false, handoffClientName: "" });
 
             setMessage(
-                draft.client_id !== null
+                clientId !== null
                     ? "Private plan assigned to your client! 🎉"
                     : "Workout plan published to the marketplace! 🎉"
             );
 
-            await fetchPlans();
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to create plan.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            await queryClient.invalidateQueries({ queryKey: ["trainer"] });
+        },
+    });
+
+    // Validation stays outside the mutation - it never talks to the server, and routing
+    // it through mutate() would only make the failure path harder to follow.
+    const handleCreatePlan = (e: FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        setValidationError("");
+        setMessage("");
+
+        if (draft.exercises.length === 0) {
+            return setValidationError("You must add at least one exercise.");
         }
+        if (draft.exercises.some((ex) => !ex.name || !ex.reps)) {
+            return setValidationError("All exercises must have a name and reps filled out.");
+        }
+
+        createPlan.mutate();
     };
 
-    if (loading) return <div className="p-6 text-gray-600 dark:text-gray-300 font-bold">Loading plans...</div>;
+    // One banner, three sources. A form validation message wins - the trainer typed
+    // something wrong and that is the thing to fix first.
+    const error = validationError
+        ? validationError
+        : plansQuery.error
+          ? "Failed to load your workout plans."
+          : createPlan.error
+            ? errorDetail(createPlan.error, "Failed to create plan.")
+            : "";
+
+    if (plansQuery.isPending) {
+        return <div className="p-6 text-gray-600 dark:text-gray-300 font-bold">Loading plans...</div>;
+    }
 
     // id -> name, so a private plan can say WHO it is for instead of just "private".
     // A client who is no longer linked simply drops out and the badge falls back.
@@ -361,7 +370,7 @@ export default function TrainerPlans() {
                 {message && <div className="bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 p-4 rounded-xl mb-6 font-bold text-sm border border-green-200 dark:border-green-800">{message}</div>}
                 {error && <div className="bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 p-4 rounded-xl mb-6 font-bold text-sm border border-red-200 dark:border-red-800">{error}</div>}
 
-                <form onSubmit={(e) => void handleCreatePlan(e)} className="flex flex-col gap-6">
+                <form onSubmit={handleCreatePlan} className="flex flex-col gap-6">
                     {/*
                       VISIBILITY comes first: it decides who the plan is even for, which
                       changes how the trainer writes everything below it.
