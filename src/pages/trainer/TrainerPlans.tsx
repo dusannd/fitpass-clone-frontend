@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
+import { WORKOUT_DRAFT_KEY as DRAFT_KEY } from "../../utils/storage";
 import { WEIGHT_STEP_OPTIONS, DEFAULT_WEIGHT_STEP } from "../../utils/workout";
 
 // --- INTERFACES ---
@@ -71,7 +72,7 @@ const emptyDraft = (): PlanDraft => ({
 // --- DRAFT PERSISTENCE ---
 // Building a 10 exercise plan takes real effort. One misclick on the sidebar used to
 // throw all of it away, so we mirror the form into localStorage on every keystroke.
-const DRAFT_KEY = "workout_plan_draft";
+// The key itself lives in utils/storage so logout can clear it.
 
 /**
  * Reads the saved draft, or null if there is none. Anything unreadable is dropped

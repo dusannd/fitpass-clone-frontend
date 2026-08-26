@@ -68,6 +68,11 @@ export default function WorkerScanner() {
         const scanner = new Html5Qrcode("reader");
         scannerRef.current = scanner;
 
+        // The countdown that puts the scanner back into scanning mode after a result.
+        // Scoped to this effect so the teardown below can cancel it - unmounting the
+        // page mid-countdown otherwise left it to setState on a dead component.
+        let resumeTimer: number | undefined;
+
         // Define the success handler inside the effect to capture the correct scope
         const handleScanSuccess = async (decodedText: string) => {
             // 1. Instantly pause scanning to prevent rapid-fire API calls
@@ -102,7 +107,8 @@ export default function WorkerScanner() {
             }
 
             // 6. Automatically resume scanning after 3 seconds
-            setTimeout(() => {
+            clearTimeout(resumeTimer);
+            resumeTimer = window.setTimeout(() => {
                 setScanResult({ status: "IDLE", message: "" });
                 setIsScanning(true);
             }, 3000);
@@ -139,6 +145,7 @@ export default function WorkerScanner() {
             // runs this cleanup and then the effect again, so the replacement scanner
             // must not be reachable from the teardown of the old one.
             scannerRef.current = null;
+            clearTimeout(resumeTimer);
             const pendingStart = startPromiseRef.current;
             startPromiseRef.current = null;
 

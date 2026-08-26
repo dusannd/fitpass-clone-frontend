@@ -1,5 +1,6 @@
 // src/api/axios.ts
 import axios from 'axios';
+import { clearUserScopedStorage } from '../utils/storage';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -19,6 +20,10 @@ api.interceptors.response.use(
             // The ?session=expired flag lets Login explain WHY they got kicked out,
             // instead of silently dropping them on an empty form.
             if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+                // The href assignment is a full reload, so the JS heap - React Query
+                // cache included - is gone in a moment anyway. localStorage is the one
+                // thing that survives it, and a QR token from a dead session must not.
+                clearUserScopedStorage();
                 window.location.href = '/login?session=expired';
             }
         }

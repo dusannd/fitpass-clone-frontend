@@ -58,6 +58,25 @@ export default function Profile() {
         };
     }, [previewUrl]);
 
+    // --- SELF-CLEARING SUCCESS MESSAGE ---
+    // The id is held so a second action can cancel the first timer. Without that,
+    // saving twice in quick succession left the older 4s timer running and it wiped
+    // the newer message early; leaving the page mid-countdown pointed a setState at
+    // an unmounted component.
+    const successTimerRef = useRef<number | null>(null);
+
+    const flashSuccess = (msg: string) => {
+        if (successTimerRef.current !== null) clearTimeout(successTimerRef.current);
+        setSuccessMsg(msg);
+        successTimerRef.current = window.setTimeout(() => setSuccessMsg(""), 4000);
+    };
+
+    useEffect(() => {
+        return () => {
+            if (successTimerRef.current !== null) clearTimeout(successTimerRef.current);
+        };
+    }, []);
+
     // The Save button stays greyed out until you actually change something
     const isDirty =
         bio.trim() !== (user.profile?.bio || "").trim() ||
@@ -90,8 +109,7 @@ export default function Profile() {
             });
 
             await refreshUser();
-            setSuccessMsg("Profile updated!");
-            setTimeout(() => setSuccessMsg(""), 4000);
+            flashSuccess("Profile updated!");
         } catch (err: unknown) {
             setError(errorDetail(err, "Failed to save your profile."));
         } finally {
@@ -134,8 +152,7 @@ export default function Profile() {
             await api.post<UserProfile>("/users/me/avatar", formData);
 
             await refreshUser();
-            setSuccessMsg("Profile picture updated!");
-            setTimeout(() => setSuccessMsg(""), 4000);
+            flashSuccess("Profile picture updated!");
         } catch (err: unknown) {
             setError(errorDetail(err, "Upload failed. Please try again."));
         } finally {
@@ -156,8 +173,7 @@ export default function Profile() {
         try {
             await api.delete("/users/me/avatar");
             await refreshUser();
-            setSuccessMsg("Profile picture removed.");
-            setTimeout(() => setSuccessMsg(""), 4000);
+            flashSuccess("Profile picture removed.");
         } catch (err: unknown) {
             setError(errorDetail(err, "Could not remove the picture."));
         } finally {

@@ -2,6 +2,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/axios";
+import { clearUserScopedStorage } from "../utils/storage";
 import Avatar from "./Avatar";
 import RouteFallback from "./RouteFallback";
 
@@ -123,8 +124,18 @@ export default function Layout() {
         } catch (err) {
             console.error("Logout request failed, clearing local session anyway.", err);
         } finally {
-            // Drop the cached profile so a future login doesn't briefly show stale data
-            queryClient.removeQueries({ queryKey: ["userProfile"] });
+            // Logging out is a client-side navigate, NOT a reload, so nothing throws
+            // the cache away on its own: every query would sit in the QueryCache for
+            // the default 5 minute gcTime, and with staleTime 30s (main.tsx) the next
+            // person to sign in on this machine would see the previous user's data
+            // rendered from cache before any refetch. clear() is the whole cache, not
+            // just ["userProfile"] - a worker's member list is just as sensitive.
+            queryClient.clear();
+
+            // localStorage survives everything, so the QR token and the plan draft
+            // have to be removed by hand. "theme" is left alone on purpose.
+            clearUserScopedStorage();
+
             navigate("/login");
         }
     };

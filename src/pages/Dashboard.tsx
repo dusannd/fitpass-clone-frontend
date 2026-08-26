@@ -7,11 +7,11 @@ import { api } from "../api/axios";
 import Avatar from "../components/Avatar";
 import { useGymWebSocket, type GymWsMessage } from "../hooks/useGymWebSocket";
 import { errorDetail } from "../utils/errors";
+import { QR_STATE_KEY as STORAGE_KEY } from "../utils/storage";
 import { parseGoals, getPrimaryAccent } from "../utils/profile";
 import type { User } from "../components/Layout";
 
 const WS_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api').replace(/^http/, 'ws');
-const STORAGE_KEY = "fitpass_qr_state";
 
 interface QrState {
     token: string;
