@@ -6,6 +6,7 @@ import ReCAPTCHA from "react-google-recaptcha";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/axios";
 import { EMAIL_REGEX } from "../utils/auth";
+import { errorDetail } from "../utils/errors";
 
 // Read environment variables
 const FEATURE_RECAPTCHA = import.meta.env.VITE_FEATURE_RECAPTCHA === "true";
@@ -61,7 +62,7 @@ export default function ForgotPassword() {
                     setError(`Too many requests. Please wait ${sec} seconds.`);
                     setCooldown(sec);
                 } else {
-                    setError(err.response.data?.detail || "Something went wrong. Please try again.");
+                    setError(errorDetail(err, "Something went wrong. Please try again."));
                 }
             } else {
                 setError("An unexpected error occurred. Is the server running?");

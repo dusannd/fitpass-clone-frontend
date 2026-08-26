@@ -2,8 +2,8 @@ import { useEffect, useState, useCallback } from "react";
 import type { FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import axios from "axios";
 import { api } from "../../api/axios.ts";
+import { errorDetail } from "../../utils/errors";
 import { MY_SUBSCRIPTION_KEY, fetchMySubscription, planIncludesTrainer } from "../../utils/subscription";
 
 interface UserInfo {
@@ -108,11 +108,7 @@ export default function MemberAppointments() {
 
             await refreshData();
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to schedule.");
-            } else {
-                setError("An error occurred.");
-            }
+            setError(errorDetail(err, "Failed to schedule."));
         }
     };
 

@@ -6,6 +6,7 @@ import axios from "axios";
 import { api } from "../api/axios";
 import Avatar from "../components/Avatar";
 import { useGymWebSocket, type GymWsMessage } from "../hooks/useGymWebSocket";
+import { errorDetail } from "../utils/errors";
 import { parseGoals, getPrimaryAccent } from "../utils/profile";
 import type { User } from "../components/Layout";
 
@@ -295,19 +296,24 @@ export default function Dashboard() {
             setTimeLeft(expiresInSec);
             setCooldownLeft(30);
         } catch (err: unknown) {
-            if (axios.isAxiosError(err) && err.response) {
-                if (err.response.status === 429) {
-                    const msg = err.response.data.detail;
-                    const sec = parseInt(msg.match(/\d+/)?.[0] || "30");
-                    const saved = localStorage.getItem(STORAGE_KEY);
-                    const parsed = saved ? JSON.parse(saved) : { expiresAt: 0, token: "", actionType: intentType };
+            const status = axios.isAxiosError(err) ? err.response?.status : undefined;
 
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, cooldownEndsAt: Date.now() + (sec * 1000) }));
-                    setCooldownLeft(sec);
-                    setError(msg);
-                } else {
-                    setError(err.response.data.detail);
-                }
+            if (status === 429) {
+                // The rate limiter puts the remaining wait into the message text
+                // ("... wait 25 seconds"), so the first number in it is the cooldown.
+                // The fallback carries a 30 for the same regex to find.
+                const msg = errorDetail(err, "Please wait 30 seconds before requesting another code.");
+                const sec = parseInt(msg.match(/\d+/)?.[0] || "30");
+                const saved = localStorage.getItem(STORAGE_KEY);
+                const parsed = saved ? JSON.parse(saved) : { expiresAt: 0, token: "", actionType: intentType };
+
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, cooldownEndsAt: Date.now() + (sec * 1000) }));
+                setCooldownLeft(sec);
+                setError(msg);
+            } else {
+                // Previously an unreachable server left this branch empty, so the
+                // spinner just stopped and the user was told nothing at all.
+                setError(errorDetail(err, "Could not generate a QR code. Please try again."));
             }
         } finally {
             setIsGenerating(false);

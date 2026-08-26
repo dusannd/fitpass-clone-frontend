@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "axios";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 
 // Definišemo strukturu korisnika
 interface Role {
@@ -79,11 +79,7 @@ export default function HRPanel() {
         },
         onError: (err: unknown) => {
             setMessage("");
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to update this staff member.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Failed to update this staff member."));
         },
     });
 

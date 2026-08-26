@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import axios from "axios";
 import { api } from "../api/axios";
+import { errorDetail } from "../utils/errors";
 import Avatar from "../components/Avatar";
 import { parseGoals, getPrimaryAccent, getRoleAccent } from "../utils/profile";
 import type { User, UserProfile } from "../components/Layout";
@@ -93,11 +93,7 @@ export default function Profile() {
             setSuccessMsg("Profile updated!");
             setTimeout(() => setSuccessMsg(""), 4000);
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to save your profile.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Failed to save your profile."));
         } finally {
             setIsSaving(false);
         }
@@ -141,11 +137,7 @@ export default function Profile() {
             setSuccessMsg("Profile picture updated!");
             setTimeout(() => setSuccessMsg(""), 4000);
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Upload failed. Please try again.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Upload failed. Please try again."));
         } finally {
             // Drop the preview and go back to the picture from the server
             setPreviewUrl(null);
@@ -167,11 +159,7 @@ export default function Profile() {
             setSuccessMsg("Profile picture removed.");
             setTimeout(() => setSuccessMsg(""), 4000);
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Could not remove the picture.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Could not remove the picture."));
         } finally {
             setIsUploading(false);
         }

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import axios from "axios";
 import { api } from "../../api/axios.ts";
+import { errorDetail } from "../../utils/errors";
 import Avatar from "../../components/Avatar";
 import MyTrainerChip from "../../components/MyTrainerChip";
 import { parseGoals } from "../../utils/profile";
@@ -115,16 +115,12 @@ export default function MemberCoaching() {
             addPendingLink(trainerId);
 
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                const errorMsg = err.response?.data?.detail || "Failed to send request.";
-                if (errorMsg.includes("already exists")) {
-                    addPendingLink(trainerId);
-                    setError(`You already have a pending or active request with ${trainerName}.`);
-                } else {
-                    setError(errorMsg);
-                }
+            const errorMsg = errorDetail(err, "Failed to send request.");
+            if (errorMsg.includes("already exists")) {
+                addPendingLink(trainerId);
+                setError(`You already have a pending or active request with ${trainerName}.`);
             } else {
-                setError("An unexpected error occurred.");
+                setError(errorMsg);
             }
         } finally {
             setLoadingId(null);

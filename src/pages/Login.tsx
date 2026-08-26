@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
 import { api } from "../api/axios";
+import { errorDetail } from "../utils/errors";
 
 // Read environment variables
 const FEATURE_RECAPTCHA = import.meta.env.VITE_FEATURE_RECAPTCHA === "true";
@@ -106,7 +107,7 @@ export default function Login() {
         } catch (err: unknown) {
             if (axios.isAxiosError(err) && err.response) {
                 const status = err.response.status;
-                const detail = err.response.data?.detail || "Something went wrong.";
+                const detail = errorDetail(err, "Something went wrong.");
 
                 setErrorCode(status);
 

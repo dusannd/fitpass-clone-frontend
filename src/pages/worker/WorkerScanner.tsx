@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
-import axios from "axios";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 
 // --- TYPES & INTERFACES ---
 interface ScanResponse {
@@ -95,17 +95,10 @@ export default function WorkerScanner() {
 
             } catch (err: unknown) {
                 // 5. Update UI to Red Error Screen
-                if (axios.isAxiosError(err)) {
-                    setScanResult({
-                        status: "ERROR",
-                        message: err.response?.data?.detail || "Access Denied"
-                    });
-                } else {
-                    setScanResult({
-                        status: "ERROR",
-                        message: "Unknown error occurred"
-                    });
-                }
+                setScanResult({
+                    status: "ERROR",
+                    message: errorDetail(err, "Access Denied")
+                });
             }
 
             // 6. Automatically resume scanning after 3 seconds

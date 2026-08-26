@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import axios from "axios";
 import { api } from "../api/axios";
+import { errorDetail } from "../utils/errors";
 import RestTimer from "./RestTimer";
 import {
     parseTargetReps,
@@ -170,11 +170,7 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
             });
             onSaved();
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to save workout session.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Failed to save workout session."));
             setIsSubmitting(false);
         }
     };

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { FormEvent } from "react";
 import axios from "axios";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 import {
     DAY_LABELS,
     PLAN_PERKS,
@@ -87,7 +88,7 @@ export default function ManagePlans() {
                 // to a genuine network/server error.
                 console.error("Failed to load locations/plans:", err);
                 if (axios.isAxiosError(err)) {
-                    setError(err.response?.data?.detail || `Failed to load locations/plans (${err.response?.status ?? "network error"}).`);
+                    setError(errorDetail(err, `Failed to load locations/plans (${err.response?.status ?? "network error"}).`));
                 } else {
                     setError("Failed to load locations/plans.");
                 }
@@ -121,11 +122,7 @@ export default function ManagePlans() {
 
             await fetchLocations();
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to add location.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Failed to add location."));
         } finally {
             setIsAddingLocation(false);
         }
@@ -243,11 +240,7 @@ export default function ManagePlans() {
             resetPlanForm();
             await fetchPlans();
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to save plan.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Failed to save plan."));
         } finally {
             setIsSubmittingPlan(false);
         }
@@ -260,11 +253,7 @@ export default function ManagePlans() {
             await api.put(`/subscriptions/plans/${planId}/toggle-active`);
             await fetchPlans();
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Failed to update plan.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Failed to update plan."));
         } finally {
             setTogglingPlanId(null);
         }

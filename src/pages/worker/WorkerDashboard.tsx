@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import axios from "axios";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 
 // --- INTERFACES ---
 // Why the backend answers a refusal in a reason code rather than only in prose:
@@ -259,8 +259,7 @@ export default function WorkerDashboard() {
                 .then((res) => res.data),
         onSuccess: () => setError(""),
         onError: (err: unknown) => {
-            if (axios.isAxiosError(err)) setError(err.response?.data?.detail || "User not found.");
-            else setError("An error occurred.");
+            setError(errorDetail(err, "User not found."));
         },
     });
 
@@ -300,8 +299,7 @@ export default function WorkerDashboard() {
         },
         onError: (err: unknown) => {
             setSuccessMsg("");
-            if (axios.isAxiosError(err)) setError(err.response?.data?.detail || "Failed to open door.");
-            else setError("Failed to open door.");
+            setError(errorDetail(err, "Failed to open door."));
         },
     });
 
@@ -345,8 +343,7 @@ export default function WorkerDashboard() {
         },
         onError: (err: unknown) => {
             setSuccessMsg("");
-            if (axios.isAxiosError(err)) setError(err.response?.data?.detail || "Failed to revoke the pass.");
-            else setError("Failed to revoke the pass.");
+            setError(errorDetail(err, "Failed to revoke the pass."));
         },
     });
 

@@ -1,9 +1,9 @@
 import { useState, useRef } from "react";
 import type { FormEvent } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
 import { api } from "../api/axios";
+import { errorDetail } from "../utils/errors";
 import PasswordStrengthMeter from "../components/PasswordStrengthMeter";
 
 // Read environment variables
@@ -148,11 +148,7 @@ export default function Register() {
 
             setSuccess(true);
         } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                setError(err.response?.data?.detail || "Registration failed. Please try again.");
-            } else {
-                setError("An unexpected error occurred.");
-            }
+            setError(errorDetail(err, "Registration failed. Please try again."));
         } finally {
             setIsLoading(false);
         }

@@ -6,6 +6,7 @@ import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/axios";
 import PasswordStrengthMeter from "../components/PasswordStrengthMeter";
 import { MIN_PASSWORD_LENGTH } from "../utils/auth";
+import { errorDetail } from "../utils/errors";
 
 export default function ResetPassword() {
     const navigate = useNavigate();
@@ -67,7 +68,7 @@ export default function ResetPassword() {
             if (axios.isAxiosError(err) && err.response) {
                 // The API already says exactly the right thing here - "Reset link
                 // expired" and "Invalid reset link" - so pass its wording through.
-                setError(err.response.data?.detail || "Could not reset your password. Please try again.");
+                setError(errorDetail(err, "Could not reset your password. Please try again."));
             } else {
                 setError("An unexpected error occurred. Is the server running?");
             }
