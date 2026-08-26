@@ -12,7 +12,7 @@ administrator all log into — and each of them sees a different product.
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF.svg?style=flat&logo=vite&logoColor=white)](https://vite.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?style=flat&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![React Query](https://img.shields.io/badge/React_Query-v5-FF4154.svg?style=flat&logo=reactquery&logoColor=white)](https://tanstack.com/query/latest)
-[![Vitest](https://img.shields.io/badge/Vitest-86_tests-6E9F18.svg?style=flat&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-97_tests-6E9F18.svg?style=flat&logo=vitest&logoColor=white)](https://vitest.dev/)
 [![Version](https://img.shields.io/badge/version-1.0.0-blueviolet.svg?style=flat)]()
 [![License](https://img.shields.io/badge/license-AGPLv3-green.svg?style=flat)](./LICENSE)
 

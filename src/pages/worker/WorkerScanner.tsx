@@ -106,6 +106,13 @@ export default function WorkerScanner() {
                 });
             }
 
+            // The post above is awaited, so the page may be gone by now. The effect
+            // cleanup nulls scannerRef synchronously, and a StrictMode remount points it
+            // at a different scanner - either way this handler no longer owns the camera.
+            // Without this the timer below would be armed AFTER the cleanup already ran
+            // clearTimeout on it, and fire three seconds later on a dead component.
+            if (scannerRef.current !== scanner) return;
+
             // 6. Automatically resume scanning after 3 seconds
             clearTimeout(resumeTimer);
             resumeTimer = window.setTimeout(() => {
