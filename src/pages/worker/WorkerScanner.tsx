@@ -210,8 +210,9 @@ export default function WorkerScanner() {
 
                 <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
                     <div className="w-full sm:flex-1">
-                        <label className="block text-xs font-bold text-gray-500 mb-1">Scan Mode</label>
+                        <label htmlFor="scan-mode" className="block text-xs font-bold text-gray-500 mb-1">Scan Mode</label>
                         <select
+                            id="scan-mode"
                             value={scanMode}
                             onChange={(e) => setScanMode(e.target.value as "ENTRY" | "EXIT")}
                             disabled={isKioskMode}
@@ -223,8 +224,9 @@ export default function WorkerScanner() {
                     </div>
 
                     <div className="w-full sm:w-1/3">
-                        <label className="block text-xs font-bold text-gray-500 mb-1">Location ID</label>
+                        <label htmlFor="scan-location" className="block text-xs font-bold text-gray-500 mb-1">Location ID</label>
                         <input
+                            id="scan-location"
                             type="number"
                             value={locationId}
                             onChange={(e) => setLocationId(parseInt(e.target.value) || 1)}

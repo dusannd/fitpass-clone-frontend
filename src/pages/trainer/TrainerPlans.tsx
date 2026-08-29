@@ -6,6 +6,7 @@ import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
 import { WORKOUT_DRAFT_KEY as DRAFT_KEY } from "../../utils/storage";
 import { WEIGHT_STEP_OPTIONS, DEFAULT_WEIGHT_STEP } from "../../utils/workout";
+import ConfirmModal from "../../components/ConfirmModal";
 
 // --- INTERFACES ---
 // The create form works with an exercise that has no id yet, so it keeps its own shape.
@@ -118,6 +119,15 @@ const isPristine = (draft: PlanDraft): boolean => {
     return !only.name.trim() && !only.instructions.trim() && only.recommended_weight_kg === null;
 };
 
+// One pending confirmation. Both cases on this page put the work they want done into
+// `run`, so a single dialog instance covers them.
+interface PendingConfirm {
+    title: string;
+    message: string;
+    confirmText: string;
+    run: () => void;
+}
+
 // What "📋 Assign Plan" on the My Clients page hands over through the router.
 interface AssignHandoff {
     assignToClientId?: number;
@@ -158,6 +168,9 @@ export default function TrainerPlans() {
 
     const [message, setMessage] = useState("");
     const [validationError, setValidationError] = useState("");
+
+    // null means no dialog is on screen. Set it to open one.
+    const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
     const plansQuery = useQuery({
         queryKey: ["trainer", "plans"],
@@ -201,15 +214,46 @@ export default function TrainerPlans() {
     };
 
     /**
+     * The banner's "Discard draft" button. Throwing away a half built plan cannot be
+     * undone - the effect above wipes localStorage the moment the form goes pristine -
+     * so it asks first. A pristine draft has nothing to lose, so it just goes.
+     */
+    const requestDiscardDraft = () => {
+        if (isPristine(draft)) {
+            discardDraft();
+            return;
+        }
+
+        setPendingConfirm({
+            title: "Discard this draft?",
+            message: "Everything you have typed into the builder is deleted. This cannot be undone.",
+            confirmText: "Discard it",
+            run: discardDraft,
+        });
+    };
+
+    /**
      * Loads an existing plan back into the builder so it can be published again for a
      * specific client. Nothing is sent yet - the trainer picks the client and hits
      * Publish, which is the same POST as always, so no new endpoint is involved.
      */
     const duplicatePlan = (plan: WorkoutPlan) => {
-        if (!isPristine(draft) && !window.confirm("Replace what you are currently building with a copy of this plan?")) {
+        // Nothing to lose in an untouched builder, so skip the dialog entirely.
+        if (isPristine(draft)) {
+            applyDuplicate(plan);
             return;
         }
 
+        setPendingConfirm({
+            title: "Replace what you are building?",
+            message: `The builder currently holds unsaved work. Copying "${plan.name}" into it overwrites that.`,
+            confirmText: "Replace it",
+            run: () => applyDuplicate(plan),
+        });
+    };
+
+    // The copy itself, once there is nothing left to ask about.
+    const applyDuplicate = (plan: WorkoutPlan) => {
         setForm({
             draft: {
                 name: `${plan.name} (copy)`,
@@ -340,7 +384,7 @@ export default function TrainerPlans() {
                         </p>
                         <button
                             type="button"
-                            onClick={discardDraft}
+                            onClick={requestDiscardDraft}
                             className="text-xs font-bold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 hover:bg-amber-200 dark:hover:bg-amber-900/80 px-3 py-2 rounded-lg transition-colors"
                         >
                             Discard draft
@@ -377,10 +421,11 @@ export default function TrainerPlans() {
                       changes how the trainer writes everything below it.
                     */}
                     <div>
-                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                        <label htmlFor="plan-visibility" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                             Visibility / Assignment
                         </label>
                         <select
+                            id="plan-visibility"
                             value={draft.client_id ?? ""}
                             onChange={(e) => patchDraft({ client_id: e.target.value === "" ? null : Number(e.target.value) })}
                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all cursor-pointer"
@@ -402,8 +447,9 @@ export default function TrainerPlans() {
 
                     <div className="flex flex-col md:flex-row gap-6">
                         <div className="w-full md:w-1/2">
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Plan Name</label>
+                            <label htmlFor="plan-name" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Plan Name</label>
                             <input
+                                id="plan-name"
                                 type="text"
                                 value={draft.name}
                                 onChange={(e) => patchDraft({ name: e.target.value })}
@@ -413,8 +459,9 @@ export default function TrainerPlans() {
                             />
                         </div>
                         <div className="w-full md:w-1/2">
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Description</label>
+                            <label htmlFor="plan-description" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Description</label>
                             <input
+                                id="plan-description"
                                 type="text"
                                 value={draft.description}
                                 onChange={(e) => patchDraft({ description: e.target.value })}
@@ -443,8 +490,12 @@ export default function TrainerPlans() {
                                   <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-end">
 
                                     <div className="flex-1 w-full lg:min-w-[140px]">
-                                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Exercise Name</label>
+                                        {/* Every field in this card is repeated once per exercise, so the
+                                            ids carry the row index - the same index the update handlers
+                                            already key on. Two rows must never share an id. */}
+                                        <label htmlFor={`ex-${index}-name`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Exercise Name</label>
                                         <input
+                                            id={`ex-${index}-name`}
                                             type="text"
                                             value={ex.name}
                                             onChange={(e) => updateExercise(index, "name", e.target.value)}
@@ -454,8 +505,9 @@ export default function TrainerPlans() {
                                         />
                                     </div>
                                     <div className="w-full lg:w-20">
-                                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Sets</label>
+                                        <label htmlFor={`ex-${index}-sets`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Sets</label>
                                         <input
+                                            id={`ex-${index}-sets`}
                                             type="number"
                                             value={ex.sets}
                                             onChange={(e) => updateExercise(index, "sets", parseInt(e.target.value) || 1)}
@@ -465,8 +517,9 @@ export default function TrainerPlans() {
                                         />
                                     </div>
                                     <div className="w-full lg:w-24">
-                                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Reps</label>
+                                        <label htmlFor={`ex-${index}-reps`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Reps</label>
                                         <input
+                                            id={`ex-${index}-reps`}
                                             type="text"
                                             value={ex.reps}
                                             onChange={(e) => updateExercise(index, "reps", e.target.value)}
@@ -476,8 +529,9 @@ export default function TrainerPlans() {
                                         />
                                     </div>
                                     <div className="w-full lg:w-24">
-                                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Rest (s)</label>
+                                        <label htmlFor={`ex-${index}-rest`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Rest (s)</label>
                                         <input
+                                            id={`ex-${index}-rest`}
                                             type="number"
                                             value={ex.rest_time_seconds}
                                             onChange={(e) => updateExercise(index, "rest_time_seconds", parseInt(e.target.value) || 0)}
@@ -489,10 +543,11 @@ export default function TrainerPlans() {
 
                                     {/* WEIGHT TOGGLE CHECKBOX */}
                                     <div className="w-full lg:w-36 flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 px-4 py-3 rounded-xl border border-blue-200 dark:border-blue-800/50 transition-colors">
-                                        <label className="text-xs font-bold text-blue-800 dark:text-blue-300 cursor-pointer select-none">
+                                        <label htmlFor={`ex-${index}-weight`} className="text-xs font-bold text-blue-800 dark:text-blue-300 cursor-pointer select-none">
                                             Track Weight?
                                         </label>
                                         <input
+                                            id={`ex-${index}-weight`}
                                             type="checkbox"
                                             checked={ex.requires_weight}
                                             onChange={(e) => updateExercise(index, "requires_weight", e.target.checked)}
@@ -521,8 +576,9 @@ export default function TrainerPlans() {
                                     {ex.requires_weight && (
                                         <>
                                             <div className="w-full sm:w-32">
-                                                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Target (kg)</label>
+                                                <label htmlFor={`ex-${index}-target`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Target (kg)</label>
                                                 <input
+                                                    id={`ex-${index}-target`}
                                                     type="number"
                                                     step="0.25"
                                                     min="0"
@@ -534,8 +590,9 @@ export default function TrainerPlans() {
                                             </div>
 
                                             <div className="w-full sm:w-56">
-                                                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Weight Step</label>
+                                                <label htmlFor={`ex-${index}-step`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Weight Step</label>
                                                 <select
+                                                    id={`ex-${index}-step`}
                                                     value={ex.weight_step_kg}
                                                     onChange={(e) => updateExercise(index, "weight_step_kg", parseFloat(e.target.value))}
                                                     className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all cursor-pointer"
@@ -549,8 +606,9 @@ export default function TrainerPlans() {
                                     )}
 
                                     <div className="flex-1">
-                                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Instructions</label>
+                                        <label htmlFor={`ex-${index}-instructions`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Instructions</label>
                                         <input
+                                            id={`ex-${index}-instructions`}
                                             type="text"
                                             value={ex.instructions}
                                             onChange={(e) => updateExercise(index, "instructions", e.target.value)}
@@ -653,6 +711,22 @@ export default function TrainerPlans() {
                     </div>
                 )}
             </div>
+
+            {/* --- CONFIRMATION DIALOG --- */}
+            {/* Shared by "Discard draft" and "Duplicate for a client": whichever ran
+                last left its copy and its callback in pendingConfirm. */}
+            <ConfirmModal
+                isOpen={pendingConfirm !== null}
+                title={pendingConfirm?.title ?? ""}
+                message={pendingConfirm?.message ?? ""}
+                confirmText={pendingConfirm?.confirmText}
+                variant="danger"
+                onConfirm={() => {
+                    pendingConfirm?.run();
+                    setPendingConfirm(null);
+                }}
+                onCancel={() => setPendingConfirm(null)}
+            />
         </div>
     );
 }

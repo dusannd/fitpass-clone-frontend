@@ -422,10 +422,11 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
 
                         {/* SESSION NOTES */}
                         <div className="mt-1">
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
+                            <label htmlFor="session-notes" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
                                 How did you feel? Hit any PRs?
                             </label>
                             <textarea
+                                id="session-notes"
                                 rows={3}
                                 value={notes}
                                 onChange={(e) => setNotes(e.target.value)}

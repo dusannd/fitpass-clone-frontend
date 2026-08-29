@@ -178,8 +178,9 @@ export default function MemberAppointments() {
                     ) : (
                         <form onSubmit={(e) => void handleSchedule(e)} className="flex flex-col gap-4">
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Select Trainer</label>
+                                <label htmlFor="booking-trainer" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Select Trainer</label>
                                 <select
+                                    id="booking-trainer"
                                     required
                                     value={selectedTrainer}
                                     onChange={(e) => setSelectedTrainer(e.target.value)}
@@ -195,8 +196,9 @@ export default function MemberAppointments() {
                             </div>
 
                             <div>
-                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Date</label>
+                                <label htmlFor="booking-date" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Date</label>
                                 <input
+                                    id="booking-date"
                                     type="date"
                                     required
                                     min={todayStr} // Zabrana biranja u prošlosti direkt u kalendaru
@@ -212,8 +214,9 @@ export default function MemberAppointments() {
 
                             <div className="flex gap-4">
                                 <div className="w-1/2">
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Start Time</label>
+                                    <label htmlFor="booking-start" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Start Time</label>
                                     <input
+                                        id="booking-start"
                                         type="time"
                                         required
                                         value={startTime}
@@ -222,8 +225,9 @@ export default function MemberAppointments() {
                                     />
                                 </div>
                                 <div className="w-1/2">
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">End Time</label>
+                                    <label htmlFor="booking-end" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">End Time</label>
                                     <input
+                                        id="booking-end"
                                         type="time"
                                         required
                                         value={endTime}

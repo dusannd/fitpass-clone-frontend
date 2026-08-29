@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
+import ConfirmModal from "../../components/ConfirmModal";
 
 // --- INTERFACES ---
 // Why the backend answers a refusal in a reason code rather than only in prose:
@@ -24,6 +25,16 @@ interface StatusResponse {
     days_left?: number;
     expires_on?: string;
     message: string;
+}
+
+// One pending confirmation. Both destructive desk actions share a single piece of
+// state - and therefore a single dialog - so the page never has two half-open
+// modals to reason about. `run` is the work to do once the worker says yes.
+interface PendingConfirm {
+    title: string;
+    message: string;
+    confirmText: string;
+    run: () => void;
 }
 
 interface InsideUser {
@@ -150,6 +161,10 @@ export default function WorkerDashboard() {
     // --- PAGINATION STATE ---
     const [insidePage, setInsidePage] = useState(0);
     const [logPage, setLogPage] = useState(0);
+
+    // --- CONFIRMATION STATE ---
+    // null means no dialog is on screen. Set it to open one.
+    const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
 
     // --- 1. SEARCH QUERY ---
     // Only runs once the debounced term is long enough for the backend to accept,
@@ -320,8 +335,12 @@ export default function WorkerDashboard() {
     });
 
     const handleForceCheckout = (userId: number, name: string) => {
-        if (!confirm(`Are you sure you want to force checkout ${name}?`)) return;
-        checkoutMutation.mutate({ userId, name });
+        setPendingConfirm({
+            title: "Force checkout?",
+            message: `${name} will be marked as outside the building. Use this when someone left without scanning out.`,
+            confirmText: "Check them out",
+            run: () => checkoutMutation.mutate({ userId, name }),
+        });
     };
 
     // Revoking a pass is a billing action, not a physical one - it deliberately
@@ -348,8 +367,13 @@ export default function WorkerDashboard() {
     });
 
     const handleCancelSubscription = (userId: number) => {
-        if (!confirm("Are you sure you want to revoke this member's pass?")) return;
-        cancelSubMutation.mutate({ userId, atLocation: locationId });
+        setPendingConfirm({
+            title: "Revoke this pass?",
+            message:
+                "The membership is cancelled immediately and the member can no longer open a door. This does not check them out of the building.",
+            confirmText: "Revoke pass",
+            run: () => cancelSubMutation.mutate({ userId, atLocation: locationId }),
+        });
     };
 
     // Durations are measured against the moment the data actually arrived rather
@@ -695,6 +719,22 @@ export default function WorkerDashboard() {
                     </button>
                 </div>
             </div>
+
+            {/* --- CONFIRMATION DIALOG --- */}
+            {/* One instance serves both destructive actions: whichever handler ran
+                last put its own copy and its own callback into pendingConfirm. */}
+            <ConfirmModal
+                isOpen={pendingConfirm !== null}
+                title={pendingConfirm?.title ?? ""}
+                message={pendingConfirm?.message ?? ""}
+                confirmText={pendingConfirm?.confirmText}
+                variant="danger"
+                onConfirm={() => {
+                    pendingConfirm?.run();
+                    setPendingConfirm(null);
+                }}
+                onCancel={() => setPendingConfirm(null)}
+            />
         </div>
     );
 }

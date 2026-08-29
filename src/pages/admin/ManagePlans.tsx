@@ -327,10 +327,13 @@ export default function ManagePlans() {
 
                             <form onSubmit={(e) => void handleAddLocation(e)} className="flex flex-col gap-5">
                                 <div>
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                                    {/* Ids are prefixed per form: the plan form further down has a
+                                        Name field too, and two controls may not share an id. */}
+                                    <label htmlFor="loc-name" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                         Name
                                     </label>
                                     <input
+                                        id="loc-name"
                                         type="text"
                                         required
                                         value={locName}
@@ -341,10 +344,11 @@ export default function ManagePlans() {
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                                    <label htmlFor="loc-address" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                         Address
                                     </label>
                                     <input
+                                        id="loc-address"
                                         type="text"
                                         value={locAddress}
                                         onChange={(e) => setLocAddress(e.target.value)}
@@ -446,10 +450,11 @@ export default function ManagePlans() {
 
                             <form onSubmit={(e) => void handleSubmitPlan(e)} className="flex flex-col gap-5">
                                 <div>
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                                    <label htmlFor="plan-name" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                         Plan Name
                                     </label>
                                     <input
+                                        id="plan-name"
                                         type="text"
                                         required
                                         value={planName}
@@ -460,10 +465,11 @@ export default function ManagePlans() {
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                                    <label htmlFor="plan-description" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                         Description
                                     </label>
                                     <input
+                                        id="plan-description"
                                         type="text"
                                         value={planDescription}
                                         onChange={(e) => setPlanDescription(e.target.value)}
@@ -474,13 +480,14 @@ export default function ManagePlans() {
 
                                 <div className="flex gap-4">
                                     <div className="w-1/2">
-                                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                                        <label htmlFor="plan-price" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                             Price (RSD)
                                         </label>
                                         {/* parseFloat, not parseInt: the backend price is a float, and the
                                             edit form now loads an existing price back into this field, so
                                             truncating here would silently change the price. */}
                                         <input
+                                            id="plan-price"
                                             type="number"
                                             required
                                             min="0"
@@ -490,10 +497,11 @@ export default function ManagePlans() {
                                         />
                                     </div>
                                     <div className="w-1/2">
-                                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                                        <label htmlFor="plan-duration" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                             Duration (Days)
                                         </label>
                                         <input
+                                            id="plan-duration"
                                             type="number"
                                             required
                                             min="1"
@@ -507,10 +515,11 @@ export default function ManagePlans() {
                                 {/* PLAN TIER */}
                                 {/* Drives how premium the card looks on the member pricing page */}
                                 <div>
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
+                                    <label htmlFor="plan-tier" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                         Plan Tier
                                     </label>
                                     <select
+                                        id="plan-tier"
                                         value={planTier}
                                         onChange={(e) => setPlanTier(e.target.value as PlanTier)}
                                         className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
@@ -530,10 +539,18 @@ export default function ManagePlans() {
                                 {/* Unlike the tier above, these change what the membership
                                     actually IS. Editable while editing too - they are plain
                                     scalars, so PUT /plans/{id} takes them. */}
-                                <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl transition-colors">
-                                    <label className="block text-sm font-bold text-emerald-900 dark:text-emerald-300 mb-1">
+                                {/* This heading names the whole group of checkboxes, not one control,
+                                    so it is a <p> with role="group"/aria-labelledby rather than a
+                                    <label> - htmlFor would have nothing correct to point at. Each
+                                    individual perk below already wraps its own checkbox. */}
+                                <div
+                                    role="group"
+                                    aria-labelledby="plan-perks-heading"
+                                    className="p-4 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/50 rounded-2xl transition-colors"
+                                >
+                                    <p id="plan-perks-heading" className="block text-sm font-bold text-emerald-900 dark:text-emerald-300 mb-1">
                                         What's Included
-                                    </label>
+                                    </p>
                                     <p className="text-xs text-emerald-700 dark:text-emerald-400 opacity-80 mb-3">
                                         Ticked perks show as green checkmarks on the member's pricing card.
                                     </p>
@@ -577,12 +594,17 @@ export default function ManagePlans() {
                                     to which gyms the plan covers. */}
 
                                 {/* LOCATION CHECKBOXES */}
-                                <div className={`p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-2xl transition-colors ${
-                                    fieldsLocked ? "opacity-60" : ""
-                                }`}>
-                                    <label className="block text-sm font-bold text-blue-900 dark:text-blue-300 mb-1">
+                                {/* Same as the perks block above: a group heading, not a label. */}
+                                <div
+                                    role="group"
+                                    aria-labelledby="plan-locations-heading"
+                                    className={`p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 rounded-2xl transition-colors ${
+                                        fieldsLocked ? "opacity-60" : ""
+                                    }`}
+                                >
+                                    <p id="plan-locations-heading" className="block text-sm font-bold text-blue-900 dark:text-blue-300 mb-1">
                                         Allowed Gym Locations
-                                    </label>
+                                    </p>
 
                                     {fieldsLocked && (
                                         <p className="text-xs text-blue-700 dark:text-blue-400 opacity-80 mb-3">
@@ -647,10 +669,11 @@ export default function ManagePlans() {
                                         <div className="flex flex-col gap-3">
                                             <div className="flex gap-3">
                                                 <div className="w-1/2">
-                                                    <label className="block text-xs font-bold text-purple-800 dark:text-purple-300 mb-1">
+                                                    <label htmlFor="rule-time-start" className="block text-xs font-bold text-purple-800 dark:text-purple-300 mb-1">
                                                         From
                                                     </label>
                                                     <input
+                                                        id="rule-time-start"
                                                         type="time"
                                                         value={allowedTimeStart}
                                                         onChange={(e) => setAllowedTimeStart(e.target.value)}
@@ -659,10 +682,11 @@ export default function ManagePlans() {
                                                     />
                                                 </div>
                                                 <div className="w-1/2">
-                                                    <label className="block text-xs font-bold text-purple-800 dark:text-purple-300 mb-1">
+                                                    <label htmlFor="rule-time-end" className="block text-xs font-bold text-purple-800 dark:text-purple-300 mb-1">
                                                         Until
                                                     </label>
                                                     <input
+                                                        id="rule-time-end"
                                                         type="time"
                                                         value={allowedTimeEnd}
                                                         onChange={(e) => setAllowedTimeEnd(e.target.value)}
@@ -672,10 +696,12 @@ export default function ManagePlans() {
                                                 </div>
                                             </div>
 
-                                            <div>
-                                                <label className="block text-xs font-bold text-purple-800 dark:text-purple-300 mb-1.5">
+                                            {/* The days are toggle buttons, not a form control, so this is
+                                                a group heading like the two above. */}
+                                            <div role="group" aria-labelledby="rule-days-heading">
+                                                <p id="rule-days-heading" className="block text-xs font-bold text-purple-800 dark:text-purple-300 mb-1.5">
                                                     Allowed Days
-                                                </label>
+                                                </p>
                                                 <div className="flex flex-wrap gap-1.5">
                                                     {DAY_LABELS.map((label, index) => (
                                                         <button

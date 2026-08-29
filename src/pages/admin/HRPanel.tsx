@@ -129,10 +129,11 @@ export default function HRPanel() {
                 <div className="flex flex-col gap-6">
                     <div className="flex flex-col sm:flex-row gap-6">
                         <div className="flex-1">
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 transition-colors">
+                            <label htmlFor="hr-email" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 transition-colors">
                                 User Email Address
                             </label>
                             <input
+                                id="hr-email"
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
@@ -142,10 +143,11 @@ export default function HRPanel() {
                         </div>
 
                         <div className="sm:w-1/3">
-                            <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 transition-colors">
+                            <label htmlFor="hr-role" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 transition-colors">
                                 Role Privilege
                             </label>
                             <select
+                                id="hr-role"
                                 value={roleName}
                                 onChange={(e) => setRoleName(e.target.value)}
                                 className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer transition-all"
