@@ -12,6 +12,7 @@ import {
     formatTime,
     getPlanTheme,
     getTierBadgeClass,
+    sortPlansByPrice,
     MY_SUBSCRIPTION_KEY,
     type MySubscription,
     type Plan,
@@ -110,7 +111,9 @@ export default function Subscriptions() {
             setError(errorDetail(err, "Could not open the billing portal. Please try again.")),
     });
 
-    const plans = plansQuery.data ?? [];
+    // Cheapest first, so the row reads like a price ladder and the raised "Most
+    // Popular" card lands in the middle where its scale-105 was designed to sit.
+    const plans = sortPlansByPrice(plansQuery.data ?? []);
     const activeSub = mySubQuery.data ?? null;
 
     // Travels with the data (see the queryFn). The 0 fallback never reaches the
@@ -226,7 +229,10 @@ export default function Subscriptions() {
                     No active subscription plans found. The admin needs to create some first.
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start pt-4">
+                // No items-start: the cards stretch to a common height, so their buttons
+                // line up along the bottom of the row no matter how long a plan's
+                // description or feature list turns out to be.
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-4">
                     {plans.map((plan) => {
                         const theme = getPlanTheme(plan.tier);
 
@@ -270,7 +276,11 @@ export default function Subscriptions() {
                                 )}
 
                                 <h2 className="text-2xl font-black">{plan.name}</h2>
-                                <p className={`mt-2 text-sm h-10 overflow-hidden ${theme.subTextClass}`}>
+                                {/* A floor, not a ceiling. 2.5rem is two text-sm lines, so short
+                                    descriptions still reserve the same space and the cards do not
+                                    look ragged - but a longer one wraps instead of being cut off
+                                    mid sentence, which is what a fixed h-10 used to do. */}
+                                <p className={`mt-2 text-sm min-h-[2.5rem] ${theme.subTextClass}`}>
                                     {plan.description || "No description provided."}
                                 </p>
 

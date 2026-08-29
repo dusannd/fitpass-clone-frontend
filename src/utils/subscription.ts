@@ -88,6 +88,20 @@ export const activePerks = (plan: Plan): PlanPerk[] =>
     PLAN_PERKS.filter((perk) => plan[perk.key]);
 
 /**
+ * Plans in the order a pricing page is read: cheapest first.
+ *
+ * The API orders by price too, so this normally changes nothing - it is here because
+ * the SPA and the API deploy separately, and because where a plan sits on the page is
+ * a presentation decision this side should own. The `id` tie-break matters: two plans
+ * at the same price would otherwise be free to swap places between two responses.
+ *
+ * Copies before sorting. React Query hands out the array it is caching, and sorting
+ * that in place would reorder the cache under every other reader of the same key.
+ */
+export const sortPlansByPrice = (plans: Plan[]): Plan[] =>
+    [...plans].sort((a, b) => a.price - b.price || a.id - b.id);
+
+/**
  * The caller's own active subscription, as returned by GET /subscriptions/my-subscription.
  * Must mirror MySubscriptionResponse in app/schemas/subscription.py 1:1.
  *

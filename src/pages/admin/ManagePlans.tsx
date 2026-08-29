@@ -11,6 +11,7 @@ import {
     formatTime,
     getTierBadgeClass,
     parseAllowedDays,
+    sortPlansByPrice,
     type GymLocation,
     type PerkKey,
     type Plan,
@@ -75,7 +76,8 @@ export default function ManagePlans() {
     // so this uses /plans/all instead of the public /plans endpoint.
     const fetchPlans = useCallback(async () => {
         const res = await api.get("/subscriptions/plans/all");
-        setPlans(res.data);
+        // Same order the members see, so a price edit here is easy to check there.
+        setPlans(sortPlansByPrice(res.data));
     }, []);
 
     useEffect(() => {

@@ -8,6 +8,7 @@ import {
     daysRemaining,
     getPlanTheme,
     activePerks,
+    sortPlansByPrice,
     PLAN_PERKS,
 } from "./subscription";
 
@@ -142,5 +143,42 @@ describe("activePerks", () => {
             allows_guest: true,
         });
         expect(activePerks(loaded)).toHaveLength(PLAN_PERKS.length);
+    });
+});
+
+describe("sortPlansByPrice", () => {
+    // The API returns plans in whatever order the database hands back, so this is
+    // what decides how the pricing cards actually read: cheapest on the left.
+    it("orders plans from cheapest to most expensive", () => {
+        const plans = [
+            makePlan({ id: 1, name: "VIP", price: 10000 }),
+            makePlan({ id: 2, name: "Standard", price: 3000 }),
+            makePlan({ id: 3, name: "Gold", price: 5000 }),
+        ];
+
+        expect(sortPlansByPrice(plans).map((p) => p.name)).toEqual(["Standard", "Gold", "VIP"]);
+    });
+
+    // Two plans at the same price would otherwise be free to swap places between
+    // two responses, and the row would reshuffle itself on a refetch.
+    it("breaks a price tie on id, so the order never wobbles", () => {
+        const plans = [
+            makePlan({ id: 9, price: 3000 }),
+            makePlan({ id: 2, price: 3000 }),
+            makePlan({ id: 5, price: 3000 }),
+        ];
+
+        expect(sortPlansByPrice(plans).map((p) => p.id)).toEqual([2, 5, 9]);
+    });
+
+    // React Query hands out the array it is caching. Sorting in place would reorder
+    // it for every other reader of the same key.
+    it("leaves the array it was given untouched", () => {
+        const plans = [makePlan({ id: 1, price: 10000 }), makePlan({ id: 2, price: 3000 })];
+
+        const sorted = sortPlansByPrice(plans);
+
+        expect(plans.map((p) => p.id)).toEqual([1, 2]);
+        expect(sorted).not.toBe(plans);
     });
 });
