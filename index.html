@@ -17,22 +17,24 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
     <!-- 3. Tints the Android Chrome address bar. Matches the blue-600 accent the
-         rest of the app is built on. -->
+         rest of the app is built on, and the theme_color in the manifest. -->
     <meta name="theme-color" content="#2563eb" />
 
-    <!-- 4. Link previews in WhatsApp, Slack, LinkedIn and friends.
-         TWO THINGS ARE STILL MISSING HERE, both deliberate:
+    <!-- 4. Web app manifest: name, icons and a standalone window when the app is
+         added to a home screen. Metadata only - there is no service worker, so
+         this buys the install card and the icon, not offline support. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
 
-         a) /banner.png and /apple-touch-icon.png do not exist yet. Drop them into
-            public/ under exactly those names and they start working with no edit
-            here. See assets/README.md for the sizes (banner ~1200x630, touch icon
-            180x180). Until then those two URLs 404 and a shared link renders with
-            no image; every other tag below already works.
+    <!-- 5. Link previews in WhatsApp, Slack, LinkedIn and friends.
+         ONE THING IS STILL MISSING HERE, deliberately:
 
-         b) og:image must be an ABSOLUTE url — crawlers do not resolve a relative
-            path. The production domain is not decided yet, so this stays relative
-            for now. Prefix both og:url and og:image with the real origin at deploy
-            time, e.g. https://fitpass.example.com/banner.png -->
+         og:image must be an ABSOLUTE url — crawlers do not resolve a relative
+         path. The production domain is not decided yet, so this stays relative
+         for now. Prefix both og:url and og:image with the real origin at deploy
+         time, e.g. https://fitpass.example.com/banner.png
+
+         The images themselves are in place: public/banner.png (1200x400) and
+         public/apple-touch-icon.png (180x180). -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="FitPass Clone | Premium Gym Access" />
     <meta

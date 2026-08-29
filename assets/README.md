@@ -13,7 +13,7 @@ then GitHub renders a broken-image icon, which is expected.
 
 | File | Notes |
 |---|---|
-| `banner.png` | Title banner at the top of the README. Wide (roughly 1280×320), same visual language as the app: rounded corners, `font-black` heading, blue-600 accent. The backend repo's `assets/banner.png` is the reference. |
+| `banner.png` | Title banner at the top of the README. **In place** — 1200×400, the same file as `public/banner.png` (which serves as the `og:image`). Wide, same visual language as the app: rounded corners, `font-black` heading, blue-600 accent. The backend repo's `assets/banner.png` is the reference. Replace both copies together if it is ever re-cut. |
 
 ### Animations (GIF)
 
