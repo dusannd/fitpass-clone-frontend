@@ -31,6 +31,11 @@ class MockWebSocket {
     onclose: ((event: CloseEvent) => void) | null = null;
     onerror: (() => void) | null = null;
 
+    // The keepalive writes to this. A mock without it would make every test that
+    // fast-forwards past the heartbeat interval die on "send is not a function"
+    // rather than on whatever it was actually asserting.
+    send = vi.fn();
+
     // A real browser fires onclose after close(), which is exactly what pushes the
     // hook through its "we closed this ourselves" guard. Skipping it would make the
     // unmount test pass without ever exercising that branch.
@@ -434,7 +439,76 @@ describe("useGymWebSocket - unmount", () => {
     });
 });
 
-// --- 6. WHAT MUST NOT REBUILD THE SOCKET -----------------------------------------
+// --- 6. KEEPALIVE ----------------------------------------------------------------
+
+describe("useGymWebSocket - keepalive", () => {
+    // Cloudflare reclaims a WebSocket that has been silent for ~100s, and this
+    // socket is silent by design: it exists to wait for a turnstile scan. Without
+    // a heartbeat the connection dies in production and works perfectly in dev,
+    // which is the worst shape a bug can have.
+    it("sends a frame every 45s while the socket is open", () => {
+        renderHook(useHookUnderTest);
+
+        act(() => {
+            latest().simulateOpen();
+        });
+        const socket = latest();
+
+        advance(44999);
+        expect(socket.send).not.toHaveBeenCalled();
+
+        advance(1);
+        expect(socket.send).toHaveBeenCalledTimes(1);
+
+        advance(45000);
+        expect(socket.send).toHaveBeenCalledTimes(2);
+    });
+
+    // Nothing is sent before the handshake completes: a frame on a CONNECTING
+    // socket is a hard throw in the browser, not a no-op.
+    it("sends nothing until the socket has opened", () => {
+        renderHook(useHookUnderTest);
+
+        advance(45000);
+
+        expect(latest().send).not.toHaveBeenCalled();
+    });
+
+    it("stops pinging a socket the network has dropped", () => {
+        renderHook(useHookUnderTest);
+
+        act(() => {
+            latest().simulateOpen();
+        });
+        const dead = latest();
+
+        act(() => {
+            dead.simulateClose(1006);
+        });
+
+        // Long enough to cover both the 1s reconnect window and a heartbeat tick.
+        advance(60000);
+
+        expect(dead.send).not.toHaveBeenCalled();
+    });
+
+    // A leaked interval is invisible until it fires on an unmounted component.
+    it("stops pinging after unmount", () => {
+        const { unmount } = renderHook(useHookUnderTest);
+
+        act(() => {
+            latest().simulateOpen();
+        });
+        const socket = sockets[0];
+
+        unmount();
+        advance(60000);
+
+        expect(socket.send).not.toHaveBeenCalled();
+    });
+});
+
+// --- 7. WHAT MUST NOT REBUILD THE SOCKET -----------------------------------------
 
 describe("useGymWebSocket - dependencies", () => {
     // Dashboard builds a fresh handleAccessEvent on every single render and passes it

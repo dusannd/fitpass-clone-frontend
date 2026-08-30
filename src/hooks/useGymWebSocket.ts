@@ -82,6 +82,23 @@ const JITTER_RATIO = 0.2;
 // it is the one close code we refuse to recover from.
 const WS_POLICY_VIOLATION = 1008;
 
+// --- 2. KEEPALIVE ------------------------------------------------------------
+// A socket that carries no traffic is indistinguishable from a dead one to
+// everything sitting in between, and every proxy eventually reclaims it -
+// Cloudflare closes an idle WebSocket after about 100 seconds.
+//
+// This flow is idle BY DESIGN. A member generates a QR code and then waits, in
+// silence, for someone at the turnstile to scan it. That is the entire point of
+// the socket, and it is exactly the pattern a proxy prunes. The failure is
+// invisible in development (nothing sits between the browser and uvicorn) and
+// certain in production: the QR stops clearing itself after a scan.
+//
+// So we speak up before the proxy gives up on us. The frame content is
+// irrelevant - app/api/access.py loops on `await websocket.receive_text()` and
+// discards whatever arrives - only the traffic matters.
+const HEARTBEAT_MS = 45000;
+const HEARTBEAT_FRAME = "ping";
+
 /**
  * Wait before retry number `attempt` (0-based): 1s, 2s, 4s, 8s, 10s, 10s...
  * each nudged by up to +/-20% so that clients do not retry in lockstep.
@@ -107,13 +124,14 @@ export function useGymWebSocket(
     const [lastMessage, setLastMessage] = useState<GymWsMessage | null>(null);
     const [reconnectAttempt, setReconnectAttempt] = useState<number>(0);
 
-    // --- 2. MUTABLE BOOKKEEPING ----------------------------------------------
+    // --- 3. MUTABLE BOOKKEEPING ----------------------------------------------
     // All of this lives in refs rather than state on purpose: it must survive
     // re-renders, but changing it must never re-run the effect below. A single
     // one of these in the dependency array would tear the socket down and rebuild
     // it on every render - the classic way to turn a reconnect into a loop.
     const socketRef = useRef<WebSocket | null>(null);
     const retryTimerRef = useRef<number | null>(null);
+    const heartbeatTimerRef = useRef<number | null>(null);
     const attemptRef = useRef<number>(0);
     const seqRef = useRef<number>(0);
 
@@ -150,6 +168,29 @@ export function useGymWebSocket(
             }
         };
 
+        const clearHeartbeat = () => {
+            if (heartbeatTimerRef.current !== null) {
+                window.clearInterval(heartbeatTimerRef.current);
+                heartbeatTimerRef.current = null;
+            }
+        };
+
+        // Tied to one specific socket rather than to socketRef, so a tick that
+        // fires while a replacement is being opened cannot write to the new one.
+        const startHeartbeat = (ws: WebSocket) => {
+            clearHeartbeat();
+
+            heartbeatTimerRef.current = window.setInterval(() => {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                try {
+                    ws.send(HEARTBEAT_FRAME);
+                } catch {
+                    // The socket died between the readyState check and the send.
+                    // onclose is already on its way and owns the reconnect.
+                }
+            }, HEARTBEAT_MS);
+        };
+
         const scheduleReconnect = () => {
             clearRetryTimer();
 
@@ -175,6 +216,8 @@ export function useGymWebSocket(
                 attemptRef.current = 0;
                 setReconnectAttempt(0);
                 setSocketStatus("OPEN");
+
+                startHeartbeat(ws);
             };
 
             ws.onmessage = (event: MessageEvent) => {
@@ -193,6 +236,10 @@ export function useGymWebSocket(
 
             ws.onclose = (event: CloseEvent) => {
                 socketRef.current = null;
+
+                // Before the isClosing guard below: an unmount returns early
+                // there, and an interval left running would outlive the hook.
+                clearHeartbeat();
 
                 // We closed it ourselves during cleanup - do not fight the unmount.
                 if (isClosingRef.current) return;
@@ -213,7 +260,7 @@ export function useGymWebSocket(
             };
         };
 
-        // --- 3. COME BACK IMMEDIATELY WHEN THE NETWORK RETURNS ----------------
+        // --- 4. COME BACK IMMEDIATELY WHEN THE NETWORK RETURNS ----------------
         // The 4G-to-WiFi handoff is the whole reason this hook exists, and the
         // browser tells us the moment it completes. Without this the socket still
         // recovers, but the user can sit and stare at a dead screen for the
@@ -232,7 +279,7 @@ export function useGymWebSocket(
         connect();
         window.addEventListener("online", handleOnline);
 
-        // --- 4. CLEANUP --------------------------------------------------------
+        // --- 5. CLEANUP --------------------------------------------------------
         return () => {
             // Order matters: raise the flag BEFORE closing, or our own close()
             // triggers onclose, which schedules a reconnect, which leaves an
@@ -241,6 +288,7 @@ export function useGymWebSocket(
 
             window.removeEventListener("online", handleOnline);
             clearRetryTimer();
+            clearHeartbeat();
 
             const ws = socketRef.current;
             socketRef.current = null;
