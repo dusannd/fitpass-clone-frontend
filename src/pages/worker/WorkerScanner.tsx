@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
+import NumberField from "../../components/NumberField";
 
 // --- TYPES & INTERFACES ---
 interface ScanResponse {
@@ -225,11 +226,13 @@ export default function WorkerScanner() {
 
                     <div className="w-full sm:w-1/3">
                         <label htmlFor="scan-location" className="block text-xs font-bold text-gray-500 mb-1">Location ID</label>
-                        <input
+                        <NumberField
                             id="scan-location"
-                            type="number"
+                            min={1}
+                            step={1}
+                            inputMode="numeric"
                             value={locationId}
-                            onChange={(e) => setLocationId(parseInt(e.target.value) || 1)}
+                            onValueChange={setLocationId}
                             disabled={isKioskMode}
                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 p-3 rounded-xl font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-center transition-all disabled:opacity-60 disabled:cursor-not-allowed"
                         />

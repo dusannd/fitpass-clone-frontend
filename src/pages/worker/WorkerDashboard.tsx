@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
 import ConfirmModal from "../../components/ConfirmModal";
+import NumberField from "../../components/NumberField";
 
 // --- INTERFACES ---
 // Why the backend answers a refusal in a reason code rather than only in prose:
@@ -407,11 +408,13 @@ export default function WorkerDashboard() {
                                 </label>
                                 <div className="flex items-center gap-2">
                                     <span className="text-xs font-bold text-gray-500">Location ID:</span>
-                                    <input
-                                        type="number"
+                                    <NumberField
                                         aria-label="Location ID"
+                                        min={1}
+                                        step={1}
+                                        inputMode="numeric"
                                         value={locationId}
-                                        onChange={(e) => setLocationId(parseInt(e.target.value) || 1)}
+                                        onValueChange={setLocationId}
                                         className="w-12 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white text-center rounded text-xs p-1"
                                     />
                                 </div>

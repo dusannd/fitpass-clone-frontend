@@ -7,6 +7,7 @@ import { errorDetail } from "../../utils/errors";
 import { WORKOUT_DRAFT_KEY as DRAFT_KEY } from "../../utils/storage";
 import { WEIGHT_STEP_OPTIONS, DEFAULT_WEIGHT_STEP } from "../../utils/workout";
 import ConfirmModal from "../../components/ConfirmModal";
+import NumberField from "../../components/NumberField";
 
 // --- INTERFACES ---
 // The create form works with an exercise that has no id yet, so it keeps its own shape.
@@ -550,13 +551,12 @@ export default function TrainerPlans() {
                                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 items-end">
                                     <div>
                                         <label htmlFor={`ex-${index}-sets`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Sets</label>
-                                        <input
+                                        <NumberField
                                             id={`ex-${index}-sets`}
-                                            type="number"
                                             value={ex.sets}
-                                            onChange={(e) => updateExercise(index, "sets", parseInt(e.target.value) || 1)}
+                                            onValueChange={(sets) => updateExercise(index, "sets", sets)}
                                             required
-                                            min="1"
+                                            min={1}
                                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                         />
                                     </div>
@@ -574,13 +574,12 @@ export default function TrainerPlans() {
                                     </div>
                                     <div>
                                         <label htmlFor={`ex-${index}-rest`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Rest (s)</label>
-                                        <input
+                                        <NumberField
                                             id={`ex-${index}-rest`}
-                                            type="number"
                                             value={ex.rest_time_seconds}
-                                            onChange={(e) => updateExercise(index, "rest_time_seconds", parseInt(e.target.value) || 0)}
+                                            onValueChange={(rest) => updateExercise(index, "rest_time_seconds", rest)}
                                             required
-                                            min="0"
+                                            min={0}
                                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                         />
                                     </div>

@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import axios from "axios";
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
+import NumberField from "../../components/NumberField";
 import {
     DAY_LABELS,
     PLAN_PERKS,
@@ -488,13 +489,14 @@ export default function ManagePlans() {
                                         {/* parseFloat, not parseInt: the backend price is a float, and the
                                             edit form now loads an existing price back into this field, so
                                             truncating here would silently change the price. */}
-                                        <input
+                                        <NumberField
                                             id="plan-price"
-                                            type="number"
                                             required
-                                            min="0"
+                                            min={0}
+                                            step={0.01}
+                                            inputMode="decimal"
                                             value={price}
-                                            onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
+                                            onValueChange={setPrice}
                                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                         />
                                     </div>
@@ -502,13 +504,14 @@ export default function ManagePlans() {
                                         <label htmlFor="plan-duration" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">
                                             Duration (Days)
                                         </label>
-                                        <input
+                                        <NumberField
                                             id="plan-duration"
-                                            type="number"
                                             required
-                                            min="1"
+                                            min={1}
+                                            step={1}
+                                            inputMode="numeric"
                                             value={durationDays}
-                                            onChange={(e) => setDurationDays(parseInt(e.target.value, 10) || 1)}
+                                            onValueChange={setDurationDays}
                                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                         />
                                     </div>

@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { api } from "../api/axios";
 import { errorDetail } from "../utils/errors";
 import RestTimer from "./RestTimer";
+import NumberField from "./NumberField";
 import {
     parseTargetReps,
     roundToStep,
@@ -365,14 +366,14 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                                                 −
                                                             </button>
                                                             <div className="flex-1 relative">
-                                                                <input
-                                                                    type="number"
+                                                                <NumberField
                                                                     inputMode="numeric"
-                                                                    min="1"
+                                                                    min={1}
+                                                                    step={1}
                                                                     value={set.reps}
-                                                                    onChange={(e) =>
+                                                                    onValueChange={(reps) =>
                                                                         patchSet(ex.id, setIndex, {
-                                                                            reps: Math.max(1, parseInt(e.target.value, 10) || 1),
+                                                                            reps,
                                                                             touched: true,
                                                                         })
                                                                     }
