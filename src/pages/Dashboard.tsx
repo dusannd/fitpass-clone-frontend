@@ -9,6 +9,7 @@ import { useGymWebSocket, type GymWsMessage } from "../hooks/useGymWebSocket";
 import { errorDetail } from "../utils/errors";
 import { QR_STATE_KEY as STORAGE_KEY } from "../utils/storage";
 import { parseGoals, getPrimaryAccent } from "../utils/profile";
+import { isQrSpent } from "../utils/access";
 import type { User } from "../components/Layout";
 
 const WS_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api').replace(/^http/, 'ws');
@@ -98,6 +99,15 @@ export default function Dashboard() {
         return (state && state.expiresAt > Date.now()) ? state.token : "";
     });
 
+    // Which door the restored code was minted for. It is written to localStorage
+    // already but was never read back, and it is the only thing that can tell a
+    // code that is still good from one the turnstile has already eaten - see the
+    // `qrIsSpent` derivation below.
+    const [qrActionType, setQrActionType] = useState<"ENTRY" | "EXIT" | null>(() => {
+        const state = getInitialQrState();
+        return (state && state.expiresAt > Date.now()) ? state.actionType : null;
+    });
+
     const [timeLeft, setTimeLeft] = useState<number>(() => {
         const state = getInitialQrState();
         return (state && state.expiresAt > Date.now()) ? Math.ceil((state.expiresAt - Date.now()) / 1000) : 0;
@@ -135,6 +145,28 @@ export default function Dashboard() {
     // stays hidden rather than guessing OUTSIDE and offering the wrong QR code.
     const physicalStatus: "INSIDE" | "OUTSIDE" | "LOADING" = accessStatus?.status ?? "LOADING";
     const enteredAt = accessStatus?.entered_at ?? null;
+
+    // --- 1b. A CODE THE DOOR HAS ALREADY EATEN ---
+    // A QR code dies two deaths and this page only ever noticed one: the clock
+    // running out. It is also burned server-side the instant it is scanned, and
+    // nothing in the stored state recorded that - so a refresh used to put a dead
+    // code back on screen and the next scan answered "Replay Attack". The rule and
+    // the reasoning live in utils/access.ts, where they are testable.
+    //
+    // Derived rather than stored, so it is correct on the first paint after the
+    // status lands instead of one render later.
+    const qrIsSpent = isQrSpent(qrActionType, physicalStatus);
+
+    // Everything the panel renders keys off this, never off qrToken directly.
+    const activeQrToken = qrIsSpent ? "" : qrToken;
+
+    // Only clears the record; the UI is already correct via activeQrToken above.
+    // Deliberately not a setState - that would be a synchronous update from an
+    // effect body, and the value it would set is one we can simply derive.
+    useEffect(() => {
+        if (!qrIsSpent) return;
+        localStorage.removeItem(STORAGE_KEY);
+    }, [qrIsSpent]);
 
     // --- 2. SESSION DURATION TIMER ---
     useEffect(() => {
@@ -187,6 +219,7 @@ export default function Dashboard() {
                     }
                     return prev;
                 });
+                setQrActionType(null);
                 localStorage.removeItem(STORAGE_KEY);
             }
 
@@ -219,6 +252,7 @@ export default function Dashboard() {
         // instantly resync the UI, even if a QR flow was mid-flight.
         if (typeof data.reason === "string" && (data.reason.includes("Manual Override") || data.reason.includes("Force Checkout"))) {
             setQrToken("");
+            setQrActionType(null);
             setTimeLeft(0);
             localStorage.removeItem(STORAGE_KEY);
             void refetchStatus();
@@ -228,8 +262,15 @@ export default function Dashboard() {
             setAccessGranted(true);
             setScanMessage(data.action_type === "ENTRY" ? "Welcome in!" : "Goodbye!");
 
+            // A refusal from an earlier attempt has just been overtaken by events.
+            // Leaving it behind was its own bug: the red banner only renders while
+            // no QR is on screen, so clearing the code below would have promoted a
+            // stale "Denied: ..." into view - attached to the scan that just worked.
+            setError("");
+
             // Instantly clear QR code
             setQrToken("");
+            setQrActionType(null);
             setTimeLeft(0);
             localStorage.removeItem(STORAGE_KEY);
 
@@ -293,6 +334,7 @@ export default function Dashboard() {
 
             localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
             setQrToken(token);
+            setQrActionType(intentType);
             setTimeLeft(expiresInSec);
             setCooldownLeft(30);
         } catch (err: unknown) {
@@ -454,7 +496,7 @@ export default function Dashboard() {
                         </p>
 
                         {/* MESSAGES */}
-                        {error && !qrToken && (
+                        {error && !activeQrToken && (
                             <div className="w-full bg-red-100 text-red-700 p-4 rounded-xl font-bold border border-red-200 mb-4 text-sm text-left">
                                 {error}
                             </div>
@@ -467,7 +509,7 @@ export default function Dashboard() {
                         )}
 
                         {/* GENERATE BUTTON */}
-                        {!qrToken && !accessGranted && (
+                        {!activeQrToken && !accessGranted && (
                             <button
                                 onClick={() => void handleGenerateQr()}
                                 disabled={isGenerating || cooldownLeft > 0}
@@ -484,7 +526,7 @@ export default function Dashboard() {
                         )}
 
                         {/* ACTIVE TOKEN TIMER */}
-                        {qrToken && !accessGranted && (
+                        {activeQrToken && !accessGranted && (
                             <div className={`w-full flex justify-between items-center px-6 py-4 rounded-xl font-bold border ${physicalStatus === "OUTSIDE" ? "bg-blue-50 text-blue-800 border-blue-200" : "bg-rose-50 text-rose-800 border-rose-200"}`}>
                                 <span>Code active for</span>
                                 <span className="text-2xl font-black tabular-nums">
@@ -501,9 +543,9 @@ export default function Dashboard() {
                                 <span className="text-6xl">🔓</span>
                                 <span className="text-emerald-600 font-black mt-3 text-2xl tracking-tight">OPEN</span>
                             </div>
-                        ) : qrToken ? (
+                        ) : activeQrToken ? (
                             <div className="z-10 animate-in fade-in zoom-in duration-300">
-                                <QRCodeSVG value={qrToken} size={200} fgColor={physicalStatus === "OUTSIDE" ? "#0f172a" : "#9f1239"} />
+                                <QRCodeSVG value={activeQrToken} size={200} fgColor={physicalStatus === "OUTSIDE" ? "#0f172a" : "#9f1239"} />
                             </div>
                         ) : (
                             <>
