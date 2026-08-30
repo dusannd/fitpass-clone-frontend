@@ -39,6 +39,12 @@ export default function MemberAppointments() {
     const [error, setError] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
 
+    // Separate from `error`, which this page also uses for a failed booking. The load
+    // error lived in the left card while the right column kept insisting the schedule
+    // was empty - so a member whose appointments failed to load was told, on the same
+    // screen, both that something went wrong and that they have nothing booked.
+    const [loadFailed, setLoadFailed] = useState(false);
+
     // Nova razdvojena forma (Datum, Vreme početka, Vreme kraja)
     const [selectedTrainer, setSelectedTrainer] = useState("");
     const [sessionDate, setSessionDate] = useState("");
@@ -73,8 +79,10 @@ export default function MemberAppointments() {
 
             setAppointments(apptsRes.data);
             setMyTrainers(acceptedTrainers);
-        } catch {
-            setError("Failed to load appointments.");
+            setLoadFailed(false);
+        } catch (err: unknown) {
+            setLoadFailed(true);
+            setError(errorDetail(err, "Failed to load appointments."));
         }
     }, []);
 
@@ -171,6 +179,10 @@ export default function MemberAppointments() {
                                 View Plans
                             </Link>
                         </div>
+                    ) : loadFailed ? (
+                        <div className="text-sm text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/30 p-4 rounded-xl border border-rose-200 dark:border-rose-800 font-bold transition-colors">
+                            Your trainers could not be loaded, so booking is unavailable right now.
+                        </div>
                     ) : myTrainers.length === 0 ? (
                         <div className="text-sm text-amber-800 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 p-4 rounded-xl border border-amber-200 dark:border-amber-800 transition-colors">
                             You don't have an active trainer yet. Go to the Find Trainer tab to request one!
@@ -251,7 +263,11 @@ export default function MemberAppointments() {
             {/* RIGHT: MY APPOINTMENTS */}
             <div className="w-full lg:w-2/3">
                 <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">My Schedule</h2>
-                {appointments.length === 0 ? (
+                {loadFailed ? (
+                    <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl shadow-sm border border-rose-200 dark:border-rose-800 text-center text-rose-600 dark:text-rose-400 font-bold transition-colors">
+                        Your schedule could not be loaded. Refresh the page to try again.
+                    </div>
+                ) : appointments.length === 0 ? (
                     <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 text-center text-gray-500 dark:text-gray-400 transition-colors">
                         You have no upcoming appointments.
                     </div>

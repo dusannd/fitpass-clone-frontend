@@ -26,6 +26,12 @@ export default function MemberCoaching() {
     const [links, setLinks] = useState<CoachingLink[]>([]);
 
     const [loading, setLoading] = useState(true);
+
+    // Separate from `error`, which this page also uses for a failed coaching request.
+    // Gating the trainer list on `error` would blank it whenever a request failed to
+    // send, and gating nothing on it left an amber "no trainers at this gym" panel
+    // sitting directly under a red "failed to load trainers" banner.
+    const [loadFailed, setLoadFailed] = useState(false);
     const [error, setError] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
     const [loadingId, setLoadingId] = useState<number | null>(null);
@@ -58,9 +64,9 @@ export default function MemberCoaching() {
                 setTrainers(trainersRes.data);
                 setLinks(myLinksRes.data);
 
-            } catch (err) {
-                setError("Failed to load trainers.");
-                console.error(err);
+            } catch (err: unknown) {
+                setLoadFailed(true);
+                setError(errorDetail(err, "Failed to load trainers."));
             } finally {
                 setLoading(false);
             }
@@ -184,7 +190,11 @@ export default function MemberCoaching() {
                 </div>
             )}
 
-            {trainers.length === 0 ? (
+            {loadFailed ? (
+                <div className="bg-rose-50 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 p-6 rounded-2xl border border-rose-200 dark:border-rose-800 font-bold transition-colors">
+                    The trainer list could not be loaded. Refresh the page to try again.
+                </div>
+            ) : trainers.length === 0 ? (
                 <div className="bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400 p-6 rounded-2xl border border-amber-200 dark:border-amber-800 transition-colors">
                     No trainers are currently available at this gym.
                 </div>

@@ -140,6 +140,13 @@ export default function Workouts() {
         privatePlansQuery.isPending ||
         trainersQuery.isPending;
 
+    // A failed fetch is not an empty library. Without these, a 500 on /workouts/history
+    // told the member "you haven't logged any workouts yet" - a confident wrong answer
+    // about their own training. Kept per tab, since each is fed by different queries.
+    const myPlansFailed = privatePlansQuery.isError || savedPlansQuery.isError;
+    const exploreFailed = trainersQuery.isError;
+    const historyFailed = historyQuery.isError;
+
     // Every write on this page invalidates the same prefix. The trainer plan cards are
     // untouched by it on purpose - they live outside this key and are still cached by
     // the expand-once logic below.
@@ -365,7 +372,7 @@ export default function Workouts() {
             </div>
 
             {actionError && (
-                <div className="mb-4 bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 p-4 rounded-xl font-bold text-sm border border-red-200 dark:border-red-800">
+                <div className="mb-4 bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 p-4 rounded-xl font-bold text-sm border border-red-200 dark:border-red-800">
                     {actionError}
                 </div>
             )}
@@ -425,7 +432,18 @@ export default function Workouts() {
             {activeTab === "my_plans" && (
                 <div>
                     {/* The member's whole library in one grid: assigned plans first, then saved ones. */}
-                    {myPlans.length === 0 ? (
+                    {myPlansFailed ? (
+                        <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-rose-200 dark:border-rose-800 text-center transition-colors">
+                            <p className="text-rose-600 dark:text-rose-400 font-bold">Could not load your plans.</p>
+                            <button
+                                type="button"
+                                onClick={() => { void privatePlansQuery.refetch(); void savedPlansQuery.refetch(); }}
+                                className="mt-3 text-sm underline font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300"
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    ) : myPlans.length === 0 ? (
                         <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-gray-200 dark:border-slate-800 text-center transition-colors">
                             <span className="text-4xl mb-4 block">🏃‍♂️</span>
                             <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No plans yet</h3>
@@ -448,7 +466,18 @@ export default function Workouts() {
             */}
             {activeTab === "explore" && (
                 <div>
-                    {trainers.length === 0 ? (
+                    {exploreFailed ? (
+                        <div className="bg-gray-50 dark:bg-slate-900/50 p-8 rounded-2xl border border-dashed border-rose-300 dark:border-rose-800 text-center transition-colors">
+                            <p className="text-rose-600 dark:text-rose-400 font-bold">Could not load the trainer marketplace.</p>
+                            <button
+                                type="button"
+                                onClick={() => void trainersQuery.refetch()}
+                                className="mt-3 text-sm underline font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300"
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    ) : trainers.length === 0 ? (
                         <div className="bg-gray-50 dark:bg-slate-900/50 p-8 rounded-2xl border border-dashed border-gray-300 dark:border-slate-700 text-center text-gray-500 transition-colors">
                             No trainers have published plans yet.
                         </div>
@@ -549,11 +578,25 @@ export default function Workouts() {
             {/* TAB CONTENT: HISTORY & PROGRESS */}
             {activeTab === "history" && (
                 <div className="flex flex-col gap-8">
-                    <ProgressCard sessions={history} />
+                    {/* Hidden rather than fed an empty array: a strength chart drawn
+                        from a failed fetch is a flat line, which reads as "you made no
+                        progress" instead of "we could not load this". */}
+                    {!historyFailed && <ProgressCard sessions={history} />}
 
                     <div>
                         <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-4">Past Sessions</h2>
-                        {history.length === 0 ? (
+                        {historyFailed ? (
+                            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-rose-200 dark:border-rose-800 text-center transition-colors">
+                                <p className="text-rose-600 dark:text-rose-400 font-bold">Could not load your workout history.</p>
+                                <button
+                                    type="button"
+                                    onClick={() => void historyQuery.refetch()}
+                                    className="mt-3 text-sm underline font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300"
+                                >
+                                    Try again
+                                </button>
+                            </div>
+                        ) : history.length === 0 ? (
                             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-gray-200 dark:border-slate-800 text-gray-500 text-center transition-colors">
                                 You haven't logged any workouts yet.
                             </div>

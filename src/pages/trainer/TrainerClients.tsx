@@ -119,6 +119,11 @@ export default function TrainerClients() {
           ? errorDetail(respond.error, "Action failed.")
           : "";
 
+    // The banner above was already right; the lists below it were not. Both sections
+    // fall back to "you have nothing" on `.length === 0`, so a failed load rendered
+    // the error AND a confident denial that any client exists - directly under it.
+    const listsFailed = requestsQuery.isError || clientsQuery.isError;
+
     if (requestsQuery.isPending || clientsQuery.isPending) {
         return <div className="p-6 text-gray-600 dark:text-gray-300 font-bold">Loading clients...</div>;
     }
@@ -142,7 +147,9 @@ export default function TrainerClients() {
                 <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-1">Pending Requests</h2>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Members who want you to be their personal trainer.</p>
 
-                {requests.length === 0 ? (
+                {listsFailed ? (
+                    <div className="text-sm text-rose-600 dark:text-rose-400 font-bold py-4">Could not load pending requests.</div>
+                ) : requests.length === 0 ? (
                     <div className="text-sm text-gray-400 dark:text-gray-500 italic py-4">No pending requests at the moment.</div>
                 ) : (
                     <div className="flex flex-col gap-4">
@@ -231,7 +238,9 @@ export default function TrainerClients() {
                 <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-1">My Active Clients</h2>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Members you are currently coaching.</p>
 
-                {activeClients.length === 0 ? (
+                {listsFailed ? (
+                    <div className="text-sm text-rose-600 dark:text-rose-400 font-bold py-4">Could not load your client list.</div>
+                ) : activeClients.length === 0 ? (
                     <div className="text-sm text-gray-400 dark:text-gray-500 italic py-4">You don't have any active clients yet.</div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
