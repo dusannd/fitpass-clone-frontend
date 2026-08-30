@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
+import { playBeep, vibrate } from "../../utils/workout";
 import NumberField from "../../components/NumberField";
 
 // --- TYPES & INTERFACES ---
@@ -44,7 +45,6 @@ export default function WorkerScanner() {
     const scannerRef = useRef<Html5Qrcode | null>(null);
     // Held so the unmount cleanup can wait for a camera that is still starting
     const startPromiseRef = useRef<Promise<void> | null>(null);
-    const audioRef = useRef<HTMLAudioElement | null>(null);
 
     // Update refs whenever state changes
     useEffect(() => {
@@ -54,12 +54,6 @@ export default function WorkerScanner() {
     useEffect(() => {
         locationIdRef.current = locationId;
     }, [locationId]);
-
-    // --- INITIALIZE AUDIO ---
-    useEffect(() => {
-        // Preload the beep sound from the public folder
-        audioRef.current = new Audio("/beep.mp3");
-    }, []);
 
     // --- INITIALIZE CAMERA SCANNER ---
     useEffect(() => {
@@ -79,13 +73,7 @@ export default function WorkerScanner() {
             // 1. Instantly pause scanning to prevent rapid-fire API calls
             setIsScanning(false);
 
-            // 2. Play success beep sound
-            if (audioRef.current) {
-                audioRef.current.currentTime = 0;
-                audioRef.current.play().catch(console.error);
-            }
-
-            // 3. Send API Request to backend using the LATEST values from refs
+            // 2. Send API Request to backend using the LATEST values from refs
             try {
                 const response = await api.post<ScanResponse>("/access/scan", {
                     qr_token: decodedText,
@@ -93,18 +81,29 @@ export default function WorkerScanner() {
                     scan_type: scanModeRef.current      // Use Ref!
                 });
 
-                // 4. Update UI to Green Success Screen
+                // 3. Update UI to Green Success Screen
                 setScanResult({
                     status: "SUCCESS",
                     message: response.data.message || "Access Granted"
                 });
 
+                // The cue belongs HERE, not before the request. It used to fire the
+                // moment a code was read, which meant the door sounded identical
+                // whether it opened or refused - the one thing the worker needs the
+                // sound to tell them. They are usually looking at the member, not the
+                // phone.
+                playBeep();
+
             } catch (err: unknown) {
-                // 5. Update UI to Red Error Screen
+                // 4. Update UI to Red Error Screen
                 setScanResult({
                     status: "ERROR",
                     message: errorDetail(err, "Access Denied")
                 });
+
+                // Deliberately not a beep: a refusal must not sound like a success.
+                // A double buzz is unmistakable in a noisy gym and needs no speaker.
+                vibrate([80, 60, 80]);
             }
 
             // The post above is awaited, so the page may be gone by now. The effect
@@ -114,7 +113,7 @@ export default function WorkerScanner() {
             // clearTimeout on it, and fire three seconds later on a dead component.
             if (scannerRef.current !== scanner) return;
 
-            // 6. Automatically resume scanning after 3 seconds
+            // 5. Automatically resume scanning after 3 seconds
             clearTimeout(resumeTimer);
             resumeTimer = window.setTimeout(() => {
                 setScanResult({ status: "IDLE", message: "" });

@@ -166,8 +166,7 @@ const getAudioContext = (): AudioContext | null => {
 
 /**
  * Synthesizes a short beep. We generate the tone instead of shipping an audio file so
- * there is nothing to 404 and nothing to decode before it can play.
- * If someone later drops a real /beep.mp3 into public/, that file wins automatically.
+ * there is nothing to download, nothing to 404 and nothing to decode before it plays.
  */
 const synthesizeBeep = (): void => {
     const ctx = getAudioContext();
@@ -195,16 +194,20 @@ const synthesizeBeep = (): void => {
 };
 
 /**
- * Plays the rest-over cue. Tries the optional /beep.mp3 asset first and falls back to
- * the synthesized tone, which is what happens today because that file is not in public/.
+ * The short confirmation cue: rest is over, or the turnstile let somebody in.
+ *
+ * This used to try an optional `/beep.mp3` first and fall back to the tone. That
+ * was worse than it looked. `location /` in nginx serves index.html for anything
+ * it cannot find, so a missing file came back as **200 with 2.6 KB of HTML** - the
+ * browser downloaded it, failed to decode it, logged an error, and only then fell
+ * through to the tone. Every single beep paid for a wasted request and a red line
+ * in the console.
+ *
+ * It also meant dropping a file into public/ silently changed a sound nobody was
+ * thinking about: a 2.8 second recording added for the scanner replaced the 0.3
+ * second rest-timer cue too. Synthesizing unconditionally keeps the cue owned by
+ * this function.
  */
 export const playBeep = (): void => {
-    try {
-        const audio = new Audio("/beep.mp3");
-        audio.volume = 0.5;
-        // play() rejects when the file is missing or autoplay is blocked.
-        void audio.play().catch(() => synthesizeBeep());
-    } catch {
-        synthesizeBeep();
-    }
+    synthesizeBeep();
 };
