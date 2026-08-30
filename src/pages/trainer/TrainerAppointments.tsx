@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import axios from "axios";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 
 interface UserInfo {
     first_name: string;
@@ -18,41 +19,50 @@ interface Appointment {
 }
 
 export default function TrainerAppointments() {
-    const [appointments, setAppointments] = useState<Appointment[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState("");
+    const queryClient = useQueryClient();
     const [actionNotes, setActionNotes] = useState<{ [key: number]: string }>({});
 
-    const fetchAppointments = async () => {
-        try {
-            const res = await api.get("/coaching/appointments/trainer");
-            setAppointments(res.data);
-        } catch {
-            setError("Failed to load appointments.");
-        } finally {
-            setLoading(false);
-        }
-    };
+    // --- 1. THE SCHEDULE ---
+    const {
+        data: appointments = [],
+        isPending,
+        error: loadError,
+    } = useQuery({
+        queryKey: ["trainer", "appointments"],
+        queryFn: async () => {
+            const res = await api.get<Appointment[]>("/coaching/appointments/trainer");
+            return res.data;
+        },
+    });
 
-    useEffect(() => {
-        void fetchAppointments();
-    }, []);
+    // --- 2. COMPLETE / CANCEL ---
+    const updateStatus = useMutation({
+        mutationFn: async ({ id, status }: { id: number; status: string }) => {
+            // Only send 'notes' when something was actually typed. Sending null for an
+            // empty box would tell the API to CLEAR whatever feedback is already
+            // stored - and the member sees that text as "Trainer's Note".
+            const note = (actionNotes[id] || "").trim();
+            const payload: Record<string, unknown> = { status };
+            if (note) payload.notes = note;
 
-    const handleUpdateStatus = async (id: number, status: string) => {
-        try {
-            await api.put(`/coaching/appointments/${id}`, {
-                status: status,
-                notes: actionNotes[id] || null,
-            });
-            await fetchAppointments();
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                alert(err.response?.data?.detail || "Failed to update appointment.");
-            }
-        }
-    };
+            await api.put(`/coaching/appointments/${id}`, payload);
+        },
+        onSuccess: async () => {
+            // Refreshes the whole trainer section, not just this list - the same
+            // appointment shows up on the clients screen.
+            await queryClient.invalidateQueries({ queryKey: ["trainer"] });
+        },
+    });
 
-    if (loading) {
+    // One banner for both failures. This used to be an alert() for the update path,
+    // which blocks the page and looks nothing like the rest of the app.
+    const error = loadError
+        ? "Failed to load appointments."
+        : updateStatus.error
+          ? errorDetail(updateStatus.error, "Failed to update appointment.")
+          : "";
+
+    if (isPending) {
         return <div className="p-6 text-gray-600 dark:text-gray-300 font-bold">Loading schedule...</div>;
     }
 
@@ -131,33 +141,54 @@ export default function TrainerAppointments() {
                                 </div>
                             </div>
 
-                            {appt.status === "SCHEDULED" && (
-                                <div className="mt-4 flex flex-col gap-3 pt-4 border-t border-gray-100 dark:border-slate-800">
-                                    <input
-                                        type="text"
-                                        placeholder="Add feedback/notes (optional)..."
-                                        value={actionNotes[appt.id] || ""}
-                                        onChange={(e) =>
-                                            setActionNotes({ ...actionNotes, [appt.id]: e.target.value })
-                                        }
-                                        className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-2 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                                    />
-                                    <div className="flex gap-2">
-                                        <button
-                                            onClick={() => void handleUpdateStatus(appt.id, "COMPLETED")}
-                                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-xl text-xs transition"
-                                        >
-                                            Complete
-                                        </button>
-                                        <button
-                                            onClick={() => void handleUpdateStatus(appt.id, "CANCELLED")}
-                                            className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2 rounded-xl text-xs transition"
-                                        >
-                                            Cancel
-                                        </button>
+                            {appt.status === "SCHEDULED" && (() => {
+                                // The backend refuses to complete a session that hasn't begun,
+                                // so mirror that here - the trainer shouldn't have to discover
+                                // the rule through an error popup. Cancel stays available:
+                                // cancelling something upcoming is the normal case.
+                                const hasStarted = new Date() >= new Date(appt.start_time);
+
+                                return (
+                                    <div className="mt-4 flex flex-col gap-3 pt-4 border-t border-gray-100 dark:border-slate-800">
+                                        <input
+                                            type="text"
+                                            placeholder="Add feedback/notes (optional)..."
+                                            value={actionNotes[appt.id] || ""}
+                                            onChange={(e) =>
+                                                setActionNotes({ ...actionNotes, [appt.id]: e.target.value })
+                                            }
+                                            className="w-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-2 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                        />
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => updateStatus.mutate({ id: appt.id, status: "COMPLETED" })}
+                                                disabled={!hasStarted || updateStatus.isPending}
+                                                title={hasStarted ? undefined : "Session hasn't started yet"}
+                                                className={`flex-1 font-bold py-2 rounded-xl text-xs transition ${
+                                                    hasStarted
+                                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                        : "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                                                }`}
+                                            >
+                                                Complete
+                                            </button>
+                                            <button
+                                                onClick={() => updateStatus.mutate({ id: appt.id, status: "CANCELLED" })}
+                                                disabled={updateStatus.isPending}
+                                                className="flex-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-bold py-2 rounded-xl text-xs transition"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
+
+                                        {!hasStarted && (
+                                            <p className="text-[11px] text-gray-500 dark:text-gray-400 text-center">
+                                                ⏳ You can complete this once the session starts.
+                                            </p>
+                                        )}
                                     </div>
-                                </div>
-                            )}
+                                );
+                            })()}
 
                             {appt.notes && (
                                 <div className="mt-4 bg-amber-50 dark:bg-amber-950/40 p-3 rounded-xl border border-amber-200 dark:border-amber-800/60 text-xs text-amber-900 dark:text-amber-200">

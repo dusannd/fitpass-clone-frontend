@@ -1,0 +1,65 @@
+# =============================================================================
+# CI for the FitPass frontend.
+#
+# It runs exactly the four checks the project treats as gates - type check,
+# lint, tests, production build - so nobody has to remember to run them by
+# hand before opening a pull request.
+#
+# No secrets and no .env are needed here on purpose:
+#   - src/api/axios.ts falls back to http://localhost:8000/api when
+#     VITE_API_BASE_URL is unset, so the build resolves.
+#   - vite.config.ts pins VITE_FEATURE_RECAPTCHA=false for the test run, so the
+#     suite never depends on whichever flags a developer has locally.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, v1-frontend]
+  pull_request:
+    branches: [main, v1-frontend]
+
+# The workflow only reads the repository. Anything it is not granted, it cannot
+# do - a compromised action in the tree cannot push a commit.
+permissions:
+  contents: read
+
+# Pushing twice in a row makes the first run pointless. Cancel it instead of
+# paying for two.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # `cache: npm` keys off package-lock.json, which is committed - so this is
+      # a real cache hit on every run that does not change dependencies.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # `ci`, not `install`: it installs the exact lockfile tree and fails if
+      # package.json and the lockfile have drifted apart.
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc -b --noEmit
+
+      - name: Lint
+        run: npx eslint .
+
+      - name: Tests
+        run: npm test
+
+      # Runs tsc a second time (the build script is `tsc -b && vite build`).
+      # That is deliberate: this is the check on the artifact that actually
+      # ships, not on the source tree.
+      - name: Production build
+        run: npm run build

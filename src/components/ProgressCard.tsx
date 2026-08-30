@@ -36,12 +36,32 @@ interface ChartPoint {
     weight: number;
 }
 
+// One exercise as offered by the dropdown: the key we group on, plus a pretty label.
+interface ExerciseOption {
+    key: string;
+    label: string;
+}
+
+// --- NAME NORMALIZATION ---
+// Exercise names are free text typed by trainers, so "Bench press", "Bench Press" and
+// "Bench Press " all mean the same lift. We group on a normalized key and only pretty it
+// up for display, so one lift is always one line on the chart instead of three.
+// The \s+ collapse also catches accidental double spaces ("Bench  Press").
+const normalizeName = (name: string): string => name.trim().toLowerCase().replace(/\s+/g, " ");
+
+const toDisplayName = (key: string): string =>
+    key
+        .split(" ")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+
 export const ProgressCard: React.FC<ProgressCardProps> = ({ sessions }) => {
+    // Holds a normalized key, not a raw name.
     const [selectedExercise, setSelectedExercise] = useState<string>("");
 
     // Extract ONLY exercises that have recorded weights strictly greater than 0 kg
-    const availableExercises = useMemo(() => {
-        const names = new Set<string>();
+    const availableExercises = useMemo<ExerciseOption[]>(() => {
+        const keys = new Set<string>();
         sessions.forEach((session) => {
             session.exercise_logs.forEach((log) => {
                 if (
@@ -50,15 +70,20 @@ export const ProgressCard: React.FC<ProgressCardProps> = ({ sessions }) => {
                     log.weight_kg !== undefined &&
                     log.weight_kg > 0
                 ) {
-                    names.add(log.exercise.name);
+                    keys.add(normalizeName(log.exercise.name));
                 }
             });
         });
-        return Array.from(names);
+
+        // The label comes from the key, not from whichever spelling happened to be logged
+        // first, so the dropdown reads the same no matter what order the data arrives in.
+        return Array.from(keys)
+            .map((key) => ({ key, label: toDisplayName(key) }))
+            .sort((a, b) => a.label.localeCompare(b.label));
     }, [sessions]);
 
     // Active exercise defaults to the first available weighted exercise
-    const currentExercise = selectedExercise || availableExercises[0] || "";
+    const currentExercise = selectedExercise || availableExercises[0]?.key || "";
 
     // Aggregate maximum weight lifted per date for the chosen exercise
     const chartData = useMemo<ChartPoint[]>(() => {
@@ -72,9 +97,12 @@ export const ProgressCard: React.FC<ProgressCardProps> = ({ sessions }) => {
         );
 
         sortedSessions.forEach((session) => {
+            // Match on the normalized key, so every spelling variant of the same lift
+            // feeds the same session point.
             const matchingLogs = session.exercise_logs.filter(
                 (log) =>
-                    log.exercise?.name === currentExercise &&
+                    log.exercise?.name != null &&
+                    normalizeName(log.exercise.name) === currentExercise &&
                     log.weight_kg !== null &&
                     log.weight_kg !== undefined &&
                     log.weight_kg > 0
@@ -135,9 +163,9 @@ export const ProgressCard: React.FC<ProgressCardProps> = ({ sessions }) => {
                     onChange={(e) => setSelectedExercise(e.target.value)}
                     className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                 >
-                    {availableExercises.map((name) => (
-                        <option key={name} value={name}>
-                            {name}
+                    {availableExercises.map((option) => (
+                        <option key={option.key} value={option.key}>
+                            {option.label}
                         </option>
                     ))}
                 </select>

@@ -1,0 +1,31 @@
+# Everything listed here is excluded from the build context — the snapshot of
+# this folder that gets sent to the Docker daemon before the build even starts.
+# Keeping it small makes builds faster and stops secrets/junk ending up in an image.
+
+# --- 1. Dependencies and build output ---------------------------------------
+# node_modules is hundreds of MB and would be *wrong* to copy anyway: it may
+# hold platform-specific binaries built for Windows, while the image is Linux.
+# `npm ci` recreates it inside the container from package-lock.json.
+node_modules
+# dist is rebuilt by `npm run build` in the builder stage; a stale local copy
+# would be shadowed at best and confusing at worst.
+dist
+
+# --- 2. Everything hidden ---------------------------------------------------
+# A single pattern for version control, editor and tooling state, and local env
+# files — nothing the build needs starts with a dot.
+#
+# Excluding .env here is deliberate rather than incidental: Vite auto-loads it
+# during `vite build`, so leaving it in would silently bake local development
+# values into the production bundle. Every VITE_* value arrives through
+# --build-arg instead, which keeps the build deterministic.
+.*
+
+# --- 3. Documentation and local notes ---------------------------------------
+# Matched by pattern rather than listed by name, so it keeps holding as notes
+# come and go. Nothing in the build reads a .md or .txt file.
+*.md
+*.txt
+
+# --- 4. Docker's own files --------------------------------------------------
+Dockerfile*

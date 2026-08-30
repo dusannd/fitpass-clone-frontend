@@ -1,6 +1,10 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/axios";
+import { clearUserScopedStorage } from "../utils/storage";
+import Avatar from "./Avatar";
+import RouteFallback from "./RouteFallback";
 
 
 export interface Role {
@@ -16,6 +20,15 @@ export interface UserSubscription {
     is_active: number;
 }
 
+// Must match UserProfileResponse from the backend 1:1
+export interface UserProfile {
+    id: number;
+    user_id: number;
+    bio: string | null;
+    fitness_goals: string | null;
+    profile_picture_url: string | null;
+}
+
 export interface User {
     id: number;
     email: string;
@@ -23,15 +36,57 @@ export interface User {
     last_name: string;
     roles: Role[];
     subscriptions: UserSubscription[]; // <-- Dodali smo pretplate
+    profile: UserProfile | null; // <-- Bio, goals and picture (null for older accounts)
 }
 
 export default function Layout() {
     const navigate = useNavigate();
     const location = useLocation();
+    const queryClient = useQueryClient();
 
-    const [user, setUser] = useState<User | null>(null);
-    const [loading, setLoading] = useState(true);
+    // --- USER PROFILE (React Query) ---
+    // queryKey ['userProfile'] is the shared cache key other pages (e.g. Dashboard,
+    // after a successful Stripe checkout) invalidate to force a refetch of the
+    // user's subscription status without a full page reload.
+    const {
+        data: user,
+        isLoading: loading,
+        isError: userFetchFailed,
+    } = useQuery<User>({
+        queryKey: ["userProfile"],
+        queryFn: async () => {
+            const res = await api.get<User>("/users/me");
+            return res.data;
+        },
+        retry: false,
+    });
+
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Za mobilni meni
+
+    // --- USER MENU (avatar in the top right corner) ---
+    const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+    const userMenuRef = useRef<HTMLDivElement>(null);
+
+    // Close the menu on a click outside or on Escape, like every other site does
+    useEffect(() => {
+        if (!isUserMenuOpen) return;
+
+        const handleClickOutside = (e: MouseEvent) => {
+            if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+                setIsUserMenuOpen(false);
+            }
+        };
+        const handleEscape = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setIsUserMenuOpen(false);
+        };
+
+        document.addEventListener("mousedown", handleClickOutside);
+        document.addEventListener("keydown", handleEscape);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            document.removeEventListener("keydown", handleEscape);
+        };
+    }, [isUserMenuOpen]);
 
     // --- DARK MODE LOGIKA ---
     const [isDark, setIsDark] = useState(() => {
@@ -53,31 +108,49 @@ export default function Layout() {
     const toggleTheme = () => setIsDark(!isDark);
     // ------------------------
 
+    // If the session cookie is missing/expired, /users/me fails — bounce to login.
+    // (The axios 401 interceptor also handles this globally, but we cover the
+    // non-401 error case here too, e.g. network failure.)
     useEffect(() => {
-        const fetchUser = async () => {
-            try {
-                const res = await api.get("/users/me");
-                setUser(res.data);
-            } catch (err) {
-                console.error("Failed to fetch user, redirecting to login.");
-                localStorage.removeItem("token");
-                navigate("/login");
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchUser();
-    }, [navigate]);
+        if (userFetchFailed) {
+            console.error("Failed to fetch user, redirecting to login.");
+            navigate("/login");
+        }
+    }, [userFetchFailed, navigate]);
 
-    const handleLogout = () => {
-        localStorage.removeItem("token");
-        navigate("/login");
+    const handleLogout = async () => {
+        try {
+            await api.post("/users/logout");
+        } catch (err) {
+            console.error("Logout request failed, clearing local session anyway.", err);
+        } finally {
+            // Logging out is a client-side navigate, NOT a reload, so nothing throws
+            // the cache away on its own: every query would sit in the QueryCache for
+            // the default 5 minute gcTime, and with staleTime 30s (main.tsx) the next
+            // person to sign in on this machine would see the previous user's data
+            // rendered from cache before any refetch. clear() is the whole cache, not
+            // just ["userProfile"] - a worker's member list is just as sensitive.
+            queryClient.clear();
+
+            // localStorage survives everything, so the QR token and the plan draft
+            // have to be removed by hand. "theme" is left alone on purpose.
+            clearUserScopedStorage();
+
+            navigate("/login");
+        }
     };
 
 
-    useEffect(() => {
+    // Close the mobile menu on navigation. Adjusted directly during render
+    // (React's documented pattern for "reset state when a prop changes")
+    // instead of inside an effect, so the reset takes effect before paint
+    // rather than causing an extra render pass.
+    const [prevPathname, setPrevPathname] = useState(location.pathname);
+    if (location.pathname !== prevPathname) {
+        setPrevPathname(location.pathname);
         setIsMobileMenuOpen(false);
-    }, [location.pathname]);
+        setIsUserMenuOpen(false);
+    }
 
     if (loading) {
         return (
@@ -129,12 +202,10 @@ export default function Layout() {
                         FitPass<span className="text-gray-900 dark:text-white">Clone</span>
                     </h1>
 
-                    <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-full flex items-center justify-center font-black text-lg">
-                            {user.first_name.charAt(0)}
-                        </div>
+                    <Link to="/profile" className="flex items-center gap-3 group">
+                        <Avatar profile={user.profile} firstName={user.first_name} size="sm" />
                         <div className="flex flex-col">
-                            <span className="text-sm font-bold text-gray-900 dark:text-white">
+                            <span className="text-sm font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                                 {user.first_name} {user.last_name}
                             </span>
                             {/* BEDŽ ZA STATUS ČLANARINE */}
@@ -154,7 +225,7 @@ export default function Layout() {
                                 </span>
                             )}
                         </div>
-                    </div>
+                    </Link>
                 </div>
 
                 <nav className="flex-1 px-4 py-6 space-y-6 overflow-y-auto">
@@ -186,6 +257,12 @@ export default function Layout() {
                         <div>
                             <p className="px-4 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Staff</p>
                             <Link to="/worker/dashboard" className={navLinkClass("/worker/dashboard")}>Desk Panel</Link>
+                            <Link
+                                to="/worker/scanner"
+                                className="block px-4 py-3 rounded-xl text-sm font-bold text-gray-500 hover:text-gray-900 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-white dark:hover:bg-slate-800 transition-all"
+                            >
+                                Turnstile Scanner
+                            </Link>
                         </div>
                     )}
 
@@ -201,7 +278,7 @@ export default function Layout() {
 
                 <div className="p-4 border-t border-gray-200 dark:border-slate-800">
                     <button
-                        onClick={handleLogout}
+                        onClick={() => void handleLogout()}
                         className="w-full text-left px-4 py-2 text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-xl transition-colors"
                     >
                         Log Out
@@ -233,7 +310,7 @@ export default function Layout() {
                     {/* DARK MODE TOGGLE DUGME */}
                     <button
                         onClick={toggleTheme}
-                        className="p-2 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-yellow-400 rounded-full hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
+                        className="p-2 bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-yellow-400 rounded-full hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors mr-3"
                         aria-label="Toggle Dark Mode"
                     >
                         {isDark ? (
@@ -246,12 +323,78 @@ export default function Layout() {
                             </svg>
                         )}
                     </button>
+
+                    {/* AVATAR + DROPDOWN MENU (top right, like on social media) */}
+                    <div className="relative" ref={userMenuRef}>
+                        <button
+                            onClick={() => setIsUserMenuOpen(prev => !prev)}
+                            aria-haspopup="menu"
+                            aria-expanded={isUserMenuOpen}
+                            aria-label="Open profile menu"
+                            className={`rounded-full transition-all hover:ring-4 hover:ring-blue-500/20 ${
+                                isUserMenuOpen ? "ring-4 ring-blue-500/30" : ""
+                            }`}
+                        >
+                            <Avatar profile={user.profile} firstName={user.first_name} size="sm" />
+                        </button>
+
+                        {isUserMenuOpen && (
+                            <div
+                                role="menu"
+                                className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-gray-200 dark:border-slate-800 overflow-hidden z-50 origin-top-right animate-menu-pop"
+                            >
+                                {/* Who is logged in */}
+                                <div className="px-4 py-4 border-b border-gray-100 dark:border-slate-800 flex items-center gap-3">
+                                    <Avatar profile={user.profile} firstName={user.first_name} size="sm" />
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-bold text-gray-900 dark:text-white truncate">
+                                            {user.first_name} {user.last_name}
+                                        </p>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user.email}</p>
+                                    </div>
+                                </div>
+
+                                <div className="p-2">
+                                    <Link
+                                        to="/profile"
+                                        role="menuitem"
+                                        onClick={() => setIsUserMenuOpen(false)}
+                                        className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                        </svg>
+                                        My Profile
+                                    </Link>
+
+                                    <button
+                                        role="menuitem"
+                                        onClick={() => void handleLogout()}
+                                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                        </svg>
+                                        Log Out
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </header>
 
                 {/* PAGE CONTENT */}
                 <div className="flex-1 p-4 sm:p-6 overflow-auto">
-                    {/* Prosleđujemo celu user strukturu (uključujući pretplate) deci rutama */}
-                    <Outlet context={user} />
+                    {/*
+                      Prosleđujemo celu user strukturu (uključujući pretplate) deci rutama.
+
+                      The Suspense boundary sits here rather than around the whole app so
+                      a lazily-loaded page swaps out only the content area - the sidebar
+                      and header stay put instead of the screen going blank mid-navigation.
+                    */}
+                    <Suspense fallback={<RouteFallback />}>
+                        <Outlet context={user} />
+                    </Suspense>
                 </div>
             </main>
         </div>

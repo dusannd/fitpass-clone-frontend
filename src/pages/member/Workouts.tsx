@@ -1,212 +1,410 @@
-import { useEffect, useState, useCallback } from "react";
-import type { FormEvent } from "react";
-import axios from "axios";
+import { useState, useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/axios";
+import { errorDetail } from "../../utils/errors";
 import { ProgressCard } from "../../components/ProgressCard";
+import LiveWorkoutModal from "../../components/LiveWorkoutModal";
+import SessionDetailModal from "../../components/SessionDetailModal";
+import Avatar from "../../components/Avatar";
+import MyTrainerChip from "../../components/MyTrainerChip";
+import { parseGoals } from "../../utils/profile";
+import type { CoachingLink } from "../../utils/coaching";
+import type { UserProfile } from "../../components/Layout";
+import { groupLogsByExercise, type WorkoutPlan, type WorkoutSession } from "../../utils/workout";
 
 // --- INTERFACES ---
-interface Exercise {
-    id: number;
-    name: string;
-    sets: number;
-    reps: string;
-    rest_time_seconds: number;
-    requires_weight: boolean;
-}
-
-interface WorkoutPlan {
-    id: number;
-    trainer_id: number;
-    client_id: number | null;
-    name: string;
-    description: string;
-    exercises: Exercise[];
-}
-
-interface ExerciseLog {
-    id: number;
-    exercise_id: number;
-    sets_completed: number;
-    reps_completed: string;
-    weight_kg: number | null;
-    exercise: Exercise;
-}
-
-interface WorkoutSession {
-    id: number;
-    user_id: number;
-    plan_id: number;
-    date: string;
-    notes: string;
-    exercise_logs: ExerciseLog[];
-}
-
+// Same shape as the trainer cards on the Find a Trainer page.
 interface Trainer {
     id: number;
     first_name: string;
+    last_name: string;
+    profile: UserProfile | null;
 }
+
+// What the undo bar needs to put a plan back where it came from.
+interface RemovedPlan {
+    plan: WorkoutPlan;
+    type: PlanCardType;
+}
+
+// The three flavours a plan card can take. They share one shell and differ only in the
+// accent, the badge and the call to action.
+type PlanCardType = "explore" | "my_plan" | "assigned";
+
+// --- CARD VARIANT LOOKUPS ---
+// Kept next to each other so the visual language stays cohesive: change a colour here and
+// every card of that type follows, instead of hunting through branched JSX.
+const CARD_SHELL: Record<PlanCardType, string> = {
+    assigned: "border-emerald-200 dark:border-emerald-900/60 bg-gradient-to-br from-emerald-50/60 to-white dark:from-emerald-950/25 dark:to-slate-900",
+    my_plan: "border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900",
+    explore: "border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900",
+};
+
+// The left stripe is what tells the three types apart at a glance while scanning the grid.
+const CARD_STRIPE: Record<PlanCardType, string> = {
+    assigned: "bg-gradient-to-b from-emerald-500 to-blue-500",
+    my_plan: "bg-blue-500",
+    explore: "bg-gray-200 dark:bg-slate-700",
+};
+
+const CARD_BADGE: Record<PlanCardType, { label: string; className: string }> = {
+    assigned: {
+        label: "🎯 Trainer Assigned",
+        className: "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800",
+    },
+    my_plan: {
+        label: "Saved",
+        className: "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-slate-700",
+    },
+    explore: {
+        label: "Public 🔵",
+        className: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800",
+    },
+};
 
 export default function Workouts() {
     // --- STATE ---
+    const queryClient = useQueryClient();
     const [activeTab, setActiveTab] = useState<"explore" | "my_plans" | "history">("my_plans");
-    const [loading, setLoading] = useState(true);
 
-    const [publicPlans, setPublicPlans] = useState<WorkoutPlan[]>([]);
-    const [savedPlans, setSavedPlans] = useState<WorkoutPlan[]>([]);
-    const [privatePlans, setPrivatePlans] = useState<WorkoutPlan[]>([]);
-    const [history, setHistory] = useState<WorkoutSession[]>([]);
+    // --- EXPLORE (LAZY) ---
+    // We hold the trainer list, and each trainer's plans only once somebody asks for
+    // them. A key present in trainerPlans means "already fetched", which is what stops
+    // a second expand from hitting the network again.
+    const [trainerPlans, setTrainerPlans] = useState<Record<number, WorkoutPlan[]>>({});
+    const [expandedTrainers, setExpandedTrainers] = useState<number[]>([]);
+    const [loadingTrainerId, setLoadingTrainerId] = useState<number | null>(null);
+    const [trainerErrors, setTrainerErrors] = useState<Record<number, string>>({});
 
     // Modal state
     const [activeWorkout, setActiveWorkout] = useState<WorkoutPlan | null>(null);
-    const [workoutLog, setWorkoutLog] = useState<{ [exerciseId: number]: string }>({});
-    const [workoutNotes, setWorkoutNotes] = useState("");
-    const [isSubmittingLog, setIsSubmittingLog] = useState(false);
+    const [detailSession, setDetailSession] = useState<WorkoutSession | null>(null);
+
+    // The last plan removed, so an accidental tap is one click away from being undone.
+    const [removedPlan, setRemovedPlan] = useState<RemovedPlan | null>(null);
 
     // --- DATA FETCHING ---
-    const fetchAllData = useCallback(async () => {
-        setLoading(true);
+    /*
+      Five independent reads, one query each. They used to share a single Promise.all,
+      which meant the slowest of the five decided when ANY of them appeared, and one
+      failure blanked the whole page. Separately, each pane fills in as it arrives.
+
+      The trainers' plans are deliberately NOT fetched here. This used to walk the
+      trainer list and fire one request per trainer, so opening the page - or any
+      refresh after following or removing a plan - hit the API once per trainer in the
+      gym. Those still load one at a time, only when a member opens that trainer's card.
+    */
+    const historyQuery = useQuery({
+        queryKey: ["workouts", "history"],
+        queryFn: async () => (await api.get<WorkoutSession[]>("/workouts/history")).data,
+    });
+
+    const savedPlansQuery = useQuery({
+        queryKey: ["workouts", "my-plans"],
+        queryFn: async () => (await api.get<WorkoutPlan[]>("/workouts/my-plans")).data,
+    });
+
+    const privatePlansQuery = useQuery({
+        queryKey: ["workouts", "my-private-plans"],
+        queryFn: async () => (await api.get<WorkoutPlan[]>("/workouts/my-private-plans")).data,
+    });
+
+    const trainersQuery = useQuery({
+        queryKey: ["workouts", "trainers"],
+        queryFn: async () => (await api.get<Trainer[]>("/workouts/trainers")).data,
+    });
+
+    // This one only feeds the header chip, so it is allowed to fail on its own: a
+    // member with no trainer must still get their whole Workout Center.
+    const coachingQuery = useQuery({
+        queryKey: ["coaching", "my-trainers"],
+        queryFn: async () => (await api.get<CoachingLink[]>("/coaching/my-trainers")).data,
+    });
+
+    const history = historyQuery.data ?? [];
+    const trainers = trainersQuery.data ?? [];
+    const coachingLinks = coachingQuery.data ?? [];
+
+    // These two feed the useMemos further down. Written as a bare `?? []` they would
+    // hand those a brand new array on every render while the query is still pending,
+    // and the memo would recompute every time - which is the whole thing it exists
+    // to avoid.
+    const savedPlans = useMemo(() => savedPlansQuery.data ?? [], [savedPlansQuery.data]);
+    const privatePlans = useMemo(() => privatePlansQuery.data ?? [], [privatePlansQuery.data]);
+
+    // Anything the member's library is built from has to be here before the tabs make
+    // sense. The coaching chip is not on this list - it degrades to "no trainer".
+    const loading =
+        historyQuery.isPending ||
+        savedPlansQuery.isPending ||
+        privatePlansQuery.isPending ||
+        trainersQuery.isPending;
+
+    // A failed fetch is not an empty library. Without these, a 500 on /workouts/history
+    // told the member "you haven't logged any workouts yet" - a confident wrong answer
+    // about their own training. Kept per tab, since each is fed by different queries.
+    const myPlansFailed = privatePlansQuery.isError || savedPlansQuery.isError;
+    const exploreFailed = trainersQuery.isError;
+    const historyFailed = historyQuery.isError;
+
+    // Every write on this page invalidates the same prefix. The trainer plan cards are
+    // untouched by it on purpose - they live outside this key and are still cached by
+    // the expand-once logic below.
+    const refreshWorkouts = async () => {
+        await queryClient.invalidateQueries({ queryKey: ["workouts"] });
+    };
+
+    // --- EXPLORE: ONE TRAINER AT A TIME ---
+    const loadTrainerPlans = async (trainerId: number) => {
+        setLoadingTrainerId(trainerId);
+        setTrainerErrors((prev) => ({ ...prev, [trainerId]: "" }));
+
         try {
-            const histRes = await api.get("/workouts/history");
-            setHistory(histRes.data);
-
-            const savedRes = await api.get("/workouts/my-plans");
-            const privateRes = await api.get("/workouts/my-private-plans");
-            setSavedPlans(savedRes.data);
-            setPrivatePlans(privateRes.data);
-
-            const trainersRes = await api.get("/workouts/trainers");
-            let allPublic: WorkoutPlan[] = [];
-            for (const t of trainersRes.data as Trainer[]) {
-                const pRes = await api.get(`/workouts/trainers/${t.id}/plans`);
-                allPublic = [...allPublic, ...pRes.data];
-            }
-            setPublicPlans(allPublic);
-
-        } catch (err) {
-            console.error("Failed to load workout data", err);
+            const res = await api.get<WorkoutPlan[]>(`/workouts/trainers/${trainerId}/plans`);
+            setTrainerPlans((prev) => ({ ...prev, [trainerId]: res.data }));
+        } catch {
+            setTrainerErrors((prev) => ({ ...prev, [trainerId]: "Couldn't load these plans. Try again." }));
         } finally {
-            setLoading(false);
+            setLoadingTrainerId(null);
         }
-    }, []);
+    };
 
-    useEffect(() => {
-        void fetchAllData();
-    }, [fetchAllData]);
+    const toggleTrainer = (trainerId: number) => {
+        const isOpen = expandedTrainers.includes(trainerId);
+        setExpandedTrainers((prev) => (isOpen ? prev.filter((id) => id !== trainerId) : [...prev, trainerId]));
+
+        // Fetch on the FIRST open only. Collapsing and reopening reuses what we already
+        // have, and a card mid-request is not asked twice.
+        const alreadyFetched = trainerId in trainerPlans;
+        if (!isOpen && !alreadyFetched && loadingTrainerId !== trainerId) {
+            void loadTrainerPlans(trainerId);
+        }
+    };
 
     // --- ACTIONS ---
-    const handleFollowPlan = async (planId: number) => {
-        try {
+    const followPlan = useMutation({
+        mutationFn: async (planId: number) => {
             await api.post(`/workouts/${planId}/follow`);
-            await fetchAllData();
+        },
+        onSuccess: async () => {
+            await refreshWorkouts();
             setActiveTab("my_plans");
-        } catch (err: unknown) {
-            if (axios.isAxiosError(err)) {
-                window.alert(err.response?.data?.detail || "Failed to follow plan.");
-            }
-        }
+        },
+    });
+
+    /**
+     * Takes a plan out of the member's library.
+     *
+     * The two card types mean different things on the server: a saved plan is simply
+     * unfollowed, while an assigned one is only hidden - it belongs to the trainer, who
+     * keeps their copy no matter what the member does here.
+     */
+    const removePlanMutation = useMutation({
+        mutationFn: async ({ plan, type }: RemovedPlan) => {
+            if (type === "assigned") await api.post(`/workouts/${plan.id}/dismiss`);
+            else await api.delete(`/workouts/${plan.id}/follow`);
+        },
+        onSuccess: async (_data, variables) => {
+            // Only offer the undo once the server has actually accepted the removal.
+            setRemovedPlan(variables);
+            await refreshWorkouts();
+        },
+    });
+
+    // Exact inverse of removePlanMutation, driven by the undo bar.
+    const undoRemoveMutation = useMutation({
+        mutationFn: async ({ plan, type }: RemovedPlan) => {
+            if (type === "assigned") await api.delete(`/workouts/${plan.id}/dismiss`);
+            else await api.post(`/workouts/${plan.id}/follow`);
+        },
+        onSuccess: async () => {
+            setRemovedPlan(null);
+            await refreshWorkouts();
+        },
+    });
+
+    const removePlan = (plan: WorkoutPlan, type: PlanCardType) =>
+        removePlanMutation.mutate({ plan, type });
+
+    const undoRemove = () => {
+        if (removedPlan) undoRemoveMutation.mutate(removedPlan);
     };
 
-    const handleLogWorkout = async (e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
-        if (!activeWorkout) return;
-        setIsSubmittingLog(true);
-
-        try {
-            const payload = {
-                plan_id: activeWorkout.id,
-                notes: workoutNotes,
-                exercises: activeWorkout.exercises.map((ex) => ({
-                    exercise_id: ex.id,
-                    sets_completed: ex.sets,
-                    reps_completed: ex.reps,
-                    weight_kg: workoutLog[ex.id] ? parseFloat(workoutLog[ex.id]) : null
-                }))
-            };
-
-            await api.post("/workouts/log-session", payload);
-
-            setActiveWorkout(null);
-            setWorkoutLog({});
-            setWorkoutNotes("");
-            await fetchAllData();
-            setActiveTab("history");
-
-        } catch (err) {
-            window.alert("Failed to save workout session.");
-            console.error(err);
-        } finally {
-            setIsSubmittingLog(false);
-        }
+    // The modal owns the logging itself, we only refresh and switch to the history tab.
+    const handleWorkoutSaved = async () => {
+        setActiveWorkout(null);
+        await refreshWorkouts();
+        setActiveTab("history");
     };
+
+    // One banner for the three writes. These used to be window.alert(), which blocks
+    // the page and looks nothing like the rest of the app.
+    const actionError =
+        followPlan.error || removePlanMutation.error || undoRemoveMutation.error
+            ? errorDetail(
+                  followPlan.error ?? removePlanMutation.error ?? undoRemoveMutation.error,
+                  "That action could not be completed.",
+              )
+            : "";
 
     // --- RENDER HELPERS ---
-    const renderPlanCard = (plan: WorkoutPlan, type: "explore" | "my_plan" | "private") => (
-        <div key={plan.id} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
-            <div>
-                <div className="flex justify-between items-start mb-2">
-                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">{plan.name}</h3>
-                    {type === "private" && (
-                        <span className="bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400 text-[10px] font-black uppercase px-2 py-1 rounded-full border border-green-200 dark:border-green-800">
-                            Assigned 🟢
-                        </span>
-                    )}
-                    {type === "explore" && (
-                        <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 text-[10px] font-black uppercase px-2 py-1 rounded-full border border-blue-200 dark:border-blue-800">
-                            Public 🔵
-                        </span>
-                    )}
-                </div>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{plan.description}</p>
+    // Every plan on the page goes through here, assigned ones included. They are ordinary
+    // cards that happen to wear an emerald accent, not a separate widget.
+    const renderPlanCard = (plan: WorkoutPlan, type: PlanCardType) => {
+        const badge = CARD_BADGE[type];
 
-                <div className="bg-gray-50 dark:bg-slate-800/50 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50 mb-6">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Exercises ({plan.exercises.length})</p>
-                    <ul className="text-sm text-gray-700 dark:text-gray-300 space-y-1.5">
-                        {plan.exercises.slice(0, 3).map((ex) => (
-                            <li key={ex.id} className="flex justify-between">
-                                <span>{ex.name}</span>
-                                <span className="text-gray-500">{ex.sets}x{ex.reps}</span>
-                            </li>
-                        ))}
-                        {plan.exercises.length > 3 && (
-                            <li className="text-xs text-blue-500 font-bold pt-1">+{plan.exercises.length - 3} more...</li>
-                        )}
-                    </ul>
+        return (
+            <div
+                key={plan.id}
+                className={`relative overflow-hidden border rounded-2xl p-6 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all flex flex-col justify-between ${CARD_SHELL[type]}`}
+            >
+                {/* Accent stripe: the one element that makes the card type readable at a glance */}
+                <div className={`absolute inset-y-0 left-0 w-1.5 ${CARD_STRIPE[type]}`}></div>
+
+                <div className="pl-2">
+                    <div className="flex justify-between items-start gap-2 mb-2">
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white leading-tight">{plan.name}</h3>
+                        <span className={`shrink-0 text-[10px] font-black uppercase px-2 py-1 rounded-full border ${badge.className}`}>
+                            {badge.label}
+                        </span>
+                    </div>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{plan.description}</p>
+
+                    <div className="bg-gray-50 dark:bg-slate-800/50 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50 mb-6">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Exercises ({plan.exercises.length})</p>
+                        <ul className="text-sm text-gray-700 dark:text-gray-300 space-y-1.5">
+                            {plan.exercises.slice(0, 3).map((ex) => (
+                                <li key={ex.id} className="flex justify-between gap-3">
+                                    <span className="truncate">{ex.name}</span>
+                                    <span className="text-gray-500 shrink-0">{ex.sets}x{ex.reps}</span>
+                                </li>
+                            ))}
+                            {plan.exercises.length > 3 && (
+                                <li className="text-xs text-blue-500 font-bold pt-1">+{plan.exercises.length - 3} more...</li>
+                            )}
+                        </ul>
+                    </div>
+                </div>
+
+                <div className="pl-2">
+                    {type === "explore" ? (
+                        <button
+                            onClick={() => followPlan.mutate(plan.id)}
+                            className="w-full bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-900 dark:text-white font-bold py-2.5 rounded-xl transition-colors"
+                        >
+                            Save & Follow Plan
+                        </button>
+                    ) : (
+                        // Only plans already in the library can be removed, so Explore keeps
+                        // a single full width button.
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setActiveWorkout(plan)}
+                                className={`flex-1 text-white font-bold py-2.5 rounded-xl transition-all shadow-sm active:scale-[0.99] touch-manipulation ${
+                                    type === "assigned"
+                                        ? "bg-emerald-600 hover:bg-emerald-700"
+                                        : "bg-blue-600 hover:bg-blue-700"
+                                }`}
+                            >
+                                Start Workout 🚀
+                            </button>
+                            <button
+                                onClick={() => removePlan(plan, type)}
+                                title={type === "assigned" ? "Hide this plan" : "Remove from My Plans"}
+                                aria-label={type === "assigned" ? `Hide ${plan.name}` : `Remove ${plan.name} from My Plans`}
+                                className="shrink-0 w-11 bg-gray-100 hover:bg-rose-100 dark:bg-slate-800 dark:hover:bg-rose-950/50 text-gray-400 hover:text-rose-600 dark:hover:text-rose-400 font-bold rounded-xl transition-colors"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
+        );
+    };
 
-            {type === "explore" ? (
-                <button
-                    onClick={() => void handleFollowPlan(plan.id)}
-                    className="w-full bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-900 dark:text-white font-bold py-2.5 rounded-xl transition-colors"
-                >
-                    Save & Follow Plan
-                </button>
-            ) : (
-                <button
-                    onClick={() => setActiveWorkout(plan)}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-xl transition-colors shadow-sm"
-                >
-                    Start Workout 🚀
-                </button>
-            )}
-        </div>
-    );
+    // --- MY PLANS LIBRARY ---
+    // Assigned plans lead: what a trainer built for you outranks anything you saved
+    // yourself. The id filter is cheap insurance - the two endpoints should never return
+    // the same plan, but if they ever did React would warn about duplicate keys and the
+    // plan would be drawn twice.
+    const myPlans = useMemo(() => {
+        const assignedIds = new Set(privatePlans.map(p => p.id));
+        return [
+            ...privatePlans.map(plan => ({ plan, type: "assigned" as const })),
+            ...savedPlans
+                .filter(p => !assignedIds.has(p.id))
+                .map(plan => ({ plan, type: "my_plan" as const })),
+        ];
+    }, [privatePlans, savedPlans]);
+
+    // Sessions only store plan_id, but we already hold every plan the member can see, so
+    // the detail modal can name the plan without an extra request. A plan that was since
+    // deleted simply falls out and the modal shows the date alone.
+    const planNames = useMemo(() => {
+        const names = new Map<number, string>();
+        // Explore plans only contribute once their trainer has been opened - a session
+        // whose plan we cannot name simply falls back to its date.
+        [...privatePlans, ...savedPlans, ...Object.values(trainerPlans).flat()]
+            .forEach(p => names.set(p.id, p.name));
+        return names;
+    }, [privatePlans, savedPlans, trainerPlans]);
 
     if (loading) return <div className="p-6 text-gray-500 font-bold">Loading workouts...</div>;
 
     const savedPlanIds = savedPlans.map(p => p.id);
-    const availablePublicPlans = publicPlans.filter(p => !savedPlanIds.includes(p.id));
 
     return (
         <div className="max-w-6xl mx-auto flex flex-col h-full">
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold text-gray-800 dark:text-white transition-colors duration-200">
-                    Workout Center
-                </h1>
-                <p className="text-gray-600 dark:text-gray-400 mt-1 transition-colors duration-200">
-                    Find plans, crush your sets, and track your progress.
-                </p>
+            {/* HEADER: the title, and who is coaching you, on one line */}
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white transition-colors duration-200">
+                        Workout Center
+                    </h1>
+                    <p className="text-gray-600 dark:text-gray-400 mt-1 transition-colors duration-200">
+                        Find plans, crush your sets, and track your progress.
+                    </p>
+                </div>
+
+                {/* Above the tabs, so it is there on Explore and History too */}
+                <MyTrainerChip links={coachingLinks} showEmptyState />
             </div>
+
+            {actionError && (
+                <div className="mb-4 bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 p-4 rounded-xl font-bold text-sm border border-red-200 dark:border-red-800">
+                    {actionError}
+                </div>
+            )}
+
+            {/*
+              UNDO BAR
+              Removing a plan is one tap, so putting it back has to be one tap too. This is
+              why there is no confirm dialog in the way of every removal.
+            */}
+            {removedPlan && (
+                <div className="mb-6 flex flex-wrap items-center justify-between gap-3 bg-slate-900 dark:bg-slate-800 text-white px-5 py-3.5 rounded-2xl shadow-lg">
+                    <p className="text-sm font-bold">
+                        Removed <span className="text-blue-300">{removedPlan.plan.name}</span>
+                        {removedPlan.type === "assigned" && " from your view"}.
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => undoRemove()}
+                            className="bg-white/10 hover:bg-white/20 text-white text-xs font-black uppercase tracking-wide px-4 py-2 rounded-lg transition-colors"
+                        >
+                            Undo
+                        </button>
+                        <button
+                            onClick={() => setRemovedPlan(null)}
+                            aria-label="Dismiss"
+                            className="text-white/50 hover:text-white px-2 font-bold transition-colors"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* TABS NAVIGATION */}
             <div className="flex gap-2 p-1 bg-gray-100 dark:bg-slate-900 rounded-2xl w-full sm:w-fit mb-8 border border-gray-200 dark:border-slate-800 transition-colors">
@@ -233,32 +431,145 @@ export default function Workouts() {
             {/* TAB CONTENT: MY PLANS */}
             {activeTab === "my_plans" && (
                 <div>
-                    {privatePlans.length === 0 && savedPlans.length === 0 ? (
+                    {/* The member's whole library in one grid: assigned plans first, then saved ones. */}
+                    {myPlansFailed ? (
+                        <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-rose-200 dark:border-rose-800 text-center transition-colors">
+                            <p className="text-rose-600 dark:text-rose-400 font-bold">Could not load your plans.</p>
+                            <button
+                                type="button"
+                                onClick={() => { void privatePlansQuery.refetch(); void savedPlansQuery.refetch(); }}
+                                className="mt-3 text-sm underline font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300"
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    ) : myPlans.length === 0 ? (
                         <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl border border-gray-200 dark:border-slate-800 text-center transition-colors">
                             <span className="text-4xl mb-4 block">🏃‍♂️</span>
-                            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No active plans</h3>
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">No plans yet</h3>
                             <p className="text-gray-500 dark:text-gray-400 mb-6">You haven't saved any plans yet. Go to Explore or ask your trainer!</p>
                             <button onClick={() => setActiveTab("explore")} className="bg-blue-600 text-white font-bold py-2 px-6 rounded-xl hover:bg-blue-700 transition">Go to Explore</button>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {privatePlans.map(p => renderPlanCard(p, "private"))}
-                            {savedPlans.map(p => renderPlanCard(p, "my_plan"))}
+                            {myPlans.map(({ plan, type }) => renderPlanCard(plan, type))}
                         </div>
                     )}
                 </div>
             )}
 
             {/* TAB CONTENT: EXPLORE */}
+            {/*
+              Browse by trainer, not by one big pile of plans. Each card asks the API for
+              its own plans the first time it is opened, so landing on this tab costs a
+              single request no matter how many trainers the gym employs.
+            */}
             {activeTab === "explore" && (
                 <div>
-                    {availablePublicPlans.length === 0 ? (
+                    {exploreFailed ? (
+                        <div className="bg-gray-50 dark:bg-slate-900/50 p-8 rounded-2xl border border-dashed border-rose-300 dark:border-rose-800 text-center transition-colors">
+                            <p className="text-rose-600 dark:text-rose-400 font-bold">Could not load the trainer marketplace.</p>
+                            <button
+                                type="button"
+                                onClick={() => void trainersQuery.refetch()}
+                                className="mt-3 text-sm underline font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300"
+                            >
+                                Try again
+                            </button>
+                        </div>
+                    ) : trainers.length === 0 ? (
                         <div className="bg-gray-50 dark:bg-slate-900/50 p-8 rounded-2xl border border-dashed border-gray-300 dark:border-slate-700 text-center text-gray-500 transition-colors">
-                            No new public plans available right now.
+                            No trainers have published plans yet.
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {availablePublicPlans.map(p => renderPlanCard(p, "explore"))}
+                        <div className="flex flex-col gap-4">
+                            {trainers.map((trainer) => {
+                                const isOpen = expandedTrainers.includes(trainer.id);
+                                const isLoading = loadingTrainerId === trainer.id;
+                                const error = trainerErrors[trainer.id];
+                                const fetched = trainerPlans[trainer.id];
+                                const specialties = parseGoals(trainer.profile?.fitness_goals);
+
+                                // Plans the member already follows live in My Plans, so they
+                                // drop out here instead of offering a second Save button.
+                                const available = fetched?.filter(p => !savedPlanIds.includes(p.id));
+
+                                return (
+                                    <div
+                                        key={trainer.id}
+                                        className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl overflow-hidden transition-colors"
+                                    >
+                                        {/* TRAINER HEADER (always visible, costs nothing) */}
+                                        <div className="p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+                                            <Avatar profile={trainer.profile} firstName={trainer.first_name} size="md" />
+
+                                            <div className="flex-1 min-w-0">
+                                                <h3 className="font-bold text-gray-900 dark:text-white truncate">
+                                                    {trainer.first_name} {trainer.last_name}
+                                                </h3>
+                                                {trainer.profile?.bio ? (
+                                                    <p className="text-sm text-gray-500 dark:text-gray-400 line-clamp-1">
+                                                        {trainer.profile.bio}
+                                                    </p>
+                                                ) : (
+                                                    <p className="text-sm text-gray-400 dark:text-gray-500 italic">No bio yet.</p>
+                                                )}
+
+                                                {specialties.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1.5 mt-2">
+                                                        {specialties.map((s, i) => (
+                                                            <span
+                                                                key={`${s}-${i}`}
+                                                                className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800"
+                                                            >
+                                                                {s}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <button
+                                                onClick={() => toggleTrainer(trainer.id)}
+                                                aria-expanded={isOpen}
+                                                disabled={isLoading}
+                                                className="shrink-0 bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-900 dark:text-white text-sm font-bold py-2.5 px-5 rounded-xl transition-colors disabled:opacity-60"
+                                            >
+                                                {isLoading ? "Loading…" : isOpen ? "Hide Plans ▴" : "View Plans ▾"}
+                                            </button>
+                                        </div>
+
+                                        {/* PLANS (only ever rendered after an explicit click) */}
+                                        {isOpen && (
+                                            <div className="border-t border-gray-200 dark:border-slate-800 p-5 bg-gray-50/60 dark:bg-slate-800/30">
+                                                {isLoading ? (
+                                                    <p className="text-sm text-gray-500 dark:text-gray-400 font-bold">Loading plans…</p>
+                                                ) : error ? (
+                                                    <div className="flex flex-wrap items-center gap-3">
+                                                        <p className="text-sm font-bold text-rose-600 dark:text-rose-400">{error}</p>
+                                                        <button
+                                                            onClick={() => void loadTrainerPlans(trainer.id)}
+                                                            className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                                                        >
+                                                            Retry
+                                                        </button>
+                                                    </div>
+                                                ) : available && available.length > 0 ? (
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                                        {available.map(p => renderPlanCard(p, "explore"))}
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                                                        {fetched && fetched.length > 0
+                                                            ? "You already follow every plan from this trainer."
+                                                            : "This trainer hasn't published any public plans yet."}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                 </div>
@@ -267,139 +578,119 @@ export default function Workouts() {
             {/* TAB CONTENT: HISTORY & PROGRESS */}
             {activeTab === "history" && (
                 <div className="flex flex-col gap-8">
-                    <ProgressCard sessions={history} />
+                    {/* Hidden rather than fed an empty array: a strength chart drawn
+                        from a failed fetch is a flat line, which reads as "you made no
+                        progress" instead of "we could not load this". */}
+                    {!historyFailed && <ProgressCard sessions={history} />}
 
                     <div>
                         <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-4">Past Sessions</h2>
-                        {history.length === 0 ? (
+                        {historyFailed ? (
+                            <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-rose-200 dark:border-rose-800 text-center transition-colors">
+                                <p className="text-rose-600 dark:text-rose-400 font-bold">Could not load your workout history.</p>
+                                <button
+                                    type="button"
+                                    onClick={() => void historyQuery.refetch()}
+                                    className="mt-3 text-sm underline font-bold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300"
+                                >
+                                    Try again
+                                </button>
+                            </div>
+                        ) : history.length === 0 ? (
                             <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-gray-200 dark:border-slate-800 text-gray-500 text-center transition-colors">
                                 You haven't logged any workouts yet.
                             </div>
                         ) : (
                             <div className="flex flex-col gap-4">
-                                {history.map(session => (
-                                    <div key={session.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 transition-colors">
-                                        <div className="flex justify-between items-center mb-3">
-                                            <h3 className="font-bold text-gray-900 dark:text-white">
-                                                {new Date(session.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
-                                            </h3>
-                                            <span className="text-xs font-bold text-gray-500 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded-full">
-                                                {session.exercise_logs.length} Exercises
-                                            </span>
-                                        </div>
-                                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                                            {session.exercise_logs.map(log => (
-                                                <div key={log.id} className="bg-gray-50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-gray-100 dark:border-slate-700/50">
-                                                    <p className="text-xs font-bold text-gray-700 dark:text-gray-300 truncate" title={log.exercise?.name}>
-                                                        {log.exercise?.name || "Unknown"}
-                                                    </p>
-                                                    <p className="text-xs text-blue-600 dark:text-blue-400 font-black mt-0.5">
-                                                        {log.weight_kg ? `${log.weight_kg} kg` : "Bodyweight"}
-                                                    </p>
+                                {history.map(session => {
+                                    const exercises = groupLogsByExercise(session.exercise_logs);
+
+                                    return (
+                                        // The whole card opens the full set by set record, since the
+                                        // tiles below can only ever show a summary.
+                                        <div
+                                            key={session.id}
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => setDetailSession(session)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter" || e.key === " ") {
+                                                    e.preventDefault();
+                                                    setDetailSession(session);
+                                                }
+                                            }}
+                                            className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800 hover:border-blue-300 dark:hover:border-blue-800 hover:shadow-md cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        >
+                                            <div className="flex justify-between items-center mb-3">
+                                                <h3 className="font-bold text-gray-900 dark:text-white">
+                                                    {new Date(session.date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+                                                </h3>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-bold text-gray-500 bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded-full">
+                                                        {exercises.length} {exercises.length === 1 ? "Exercise" : "Exercises"}
+                                                    </span>
+                                                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap">
+                                                        View details →
+                                                    </span>
                                                 </div>
-                                            ))}
-                                        </div>
-                                        {session.notes && (
-                                            <div className="mt-4 pt-3 border-t border-gray-100 dark:border-slate-800 text-sm text-gray-500 dark:text-gray-400 italic">
-                                                "{session.notes}"
                                             </div>
-                                        )}
-                                    </div>
-                                ))}
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                                {exercises.map(group => (
+                                                    <div key={group.key} className="bg-gray-50 dark:bg-slate-800/60 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50">
+                                                        <p className="text-xs font-bold text-gray-700 dark:text-gray-300 truncate" title={group.name}>
+                                                            {group.name}
+                                                        </p>
+                                                        <p className="text-xs text-blue-600 dark:text-blue-400 font-black mt-0.5">
+                                                            {group.sets.length} {group.sets.length === 1 ? "set" : "sets"}
+                                                            {group.topWeight !== null ? ` · top ${group.topWeight} kg` : " · bodyweight"}
+                                                        </p>
+
+                                                        {/* The set by set breakdown, which is the whole point of per-set rows */}
+                                                        <div className="flex flex-wrap gap-1 mt-2">
+                                                            {group.sets.map(set => (
+                                                                <span
+                                                                    key={set.id}
+                                                                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-gray-400"
+                                                                >
+                                                                    {set.weight_kg !== null ? `${set.weight_kg}×${set.reps_completed}` : `${set.reps_completed} reps`}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            {session.notes && (
+                                                <div className="mt-4 pt-3 border-t border-gray-100 dark:border-slate-800 text-sm text-gray-500 dark:text-gray-400 italic">
+                                                    "{session.notes}"
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
                 </div>
             )}
 
-            {/* --- WORKOUT LOGGING MODAL --- */}
+            {/* --- LIVE WORKOUT MODAL --- */}
+            {/* key= remounts the modal per plan, so the set grid is always rebuilt fresh */}
             {activeWorkout && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div
-                        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-                        onClick={() => !isSubmittingLog && setActiveWorkout(null)}
-                    ></div>
+                <LiveWorkoutModal
+                    key={activeWorkout.id}
+                    plan={activeWorkout}
+                    onClose={() => setActiveWorkout(null)}
+                    onSaved={() => void handleWorkoutSaved()}
+                />
+            )}
 
-                    <div className="relative bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-200 dark:border-slate-800">
-                        <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-900/50">
-                            <div>
-                                <h2 className="text-2xl font-black text-gray-900 dark:text-white">Active Workout</h2>
-                                <p className="text-sm text-blue-600 dark:text-blue-400 font-bold">{activeWorkout.name}</p>
-                            </div>
-                            <button
-                                onClick={() => setActiveWorkout(null)}
-                                disabled={isSubmittingLog}
-                                className="h-10 w-10 bg-gray-200 dark:bg-slate-800 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40 dark:hover:text-red-400 rounded-full flex items-center justify-center transition-colors font-bold text-gray-600 dark:text-gray-400"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div className="p-6 overflow-y-auto flex-1">
-                            <form id="workout-form" onSubmit={(e) => void handleLogWorkout(e)} className="flex flex-col gap-6">
-
-                                {activeWorkout.exercises.map((ex, idx) => (
-                                    <div key={ex.id} className="bg-gray-50 dark:bg-slate-800/50 p-4 rounded-2xl border border-gray-200 dark:border-slate-700 flex flex-col sm:flex-row gap-4 sm:items-center justify-between">
-                                        <div className="flex items-center gap-4">
-                                            <div className="h-10 w-10 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400 rounded-full flex items-center justify-center font-black">
-                                                {idx + 1}
-                                            </div>
-                                            <div>
-                                                <p className="font-bold text-gray-900 dark:text-white text-lg">{ex.name}</p>
-                                                <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
-                                                    Target: {ex.sets} sets × {ex.reps} reps
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-center gap-2">
-                                            <label className="text-sm font-bold text-gray-600 dark:text-gray-300">Weight (kg):</label>
-                                            {ex.requires_weight ? (
-                                                <input
-                                                    type="number"
-                                                    step="0.5"
-                                                    min="0"
-                                                    placeholder="e.g. 60"
-                                                    value={workoutLog[ex.id] || ""}
-                                                    onChange={(e) => setWorkoutLog({...workoutLog, [ex.id]: e.target.value})}
-                                                    className="w-24 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white p-2.5 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center font-bold"
-                                                />
-                                            ) : (
-                                                <div className="w-24 bg-gray-100 dark:bg-slate-800/80 border border-gray-200 dark:border-slate-700 text-gray-400 dark:text-gray-500 p-2.5 rounded-xl text-center font-bold text-xs flex items-center justify-center select-none uppercase tracking-wider">
-                                                    N/A
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div> // <--- OVO JE FALILO
-                                ))}
-
-                                <div className="mt-2">
-                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                                        Session Notes (Optional)
-                                    </label>
-                                    <textarea
-                                        rows={3}
-                                        value={workoutNotes}
-                                        onChange={(e) => setWorkoutNotes(e.target.value)}
-                                        placeholder="How did you feel? Hit any PRs?"
-                                        className="w-full bg-gray-50 dark:bg-slate-800/50 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-4 rounded-2xl focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                                    ></textarea>
-                                </div>
-                            </form>
-                        </div>
-
-                        <div className="p-6 border-t border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-                            <button
-                                type="submit"
-                                form="workout-form"
-                                disabled={isSubmittingLog}
-                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl transition-all shadow-md hover:shadow-lg disabled:opacity-50 text-lg flex justify-center items-center gap-2"
-                            >
-                                {isSubmittingLog ? "Saving..." : "✅ Finish & Save Workout"}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+            {/* --- PAST SESSION DETAIL (read only) --- */}
+            {detailSession && (
+                <SessionDetailModal
+                    session={detailSession}
+                    planName={detailSession.plan_id !== null ? planNames.get(detailSession.plan_id) ?? null : null}
+                    onClose={() => setDetailSession(null)}
+                />
             )}
         </div>
     );

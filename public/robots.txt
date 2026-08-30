@@ -1,0 +1,23 @@
+# Every path below the fold needs a session cookie anyway, so this file is not a
+# security boundary - it just keeps signed-in-only screens out of search results,
+# where they would only ever render as a login redirect.
+User-agent: *
+Disallow: /api/
+Disallow: /dashboard
+Disallow: /admin/
+Disallow: /worker/
+Disallow: /trainer/
+Disallow: /profile
+Disallow: /subscriptions
+Disallow: /workouts
+Disallow: /coaching
+Disallow: /appointments
+
+# The three public entry points. Crawlers match the longest path, not the file
+# order, so these do not undo the rules above - they state the intent.
+Allow: /
+Allow: /login
+Allow: /register
+
+# No Sitemap: line yet. It has to be an absolute URL and the production origin
+# is still undecided - the same reason og:url in index.html is still relative.

@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import type { FormEvent } from "react"
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
 import { api } from "../api/axios";
+import { errorDetail } from "../utils/errors";
 
 // Read environment variables
 const FEATURE_RECAPTCHA = import.meta.env.VITE_FEATURE_RECAPTCHA === "true";
@@ -11,6 +12,10 @@ const SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY || "";
 
 export default function Login() {
     const navigate = useNavigate();
+
+    // Set by the axios 401 interceptor when it kicks a user out mid-session
+    const [searchParams] = useSearchParams();
+    const sessionExpired = searchParams.get("session") === "expired";
 
     // --- FORM STATE ---
     const [email, setEmail] = useState("");
@@ -102,7 +107,7 @@ export default function Login() {
         } catch (err: unknown) {
             if (axios.isAxiosError(err) && err.response) {
                 const status = err.response.status;
-                const detail = err.response.data?.detail || "Something went wrong.";
+                const detail = errorDetail(err, "Something went wrong.");
 
                 setErrorCode(status);
 
@@ -111,8 +116,14 @@ export default function Login() {
                 } else if (status === 403) {
                     setError("Your email is not verified.");
                 } else if (status === 429) {
-                    setError("Too many attempts. Please wait.");
-                    setCooldown(60); // 60 seconds cooldown
+                    // The backend sends the exact seconds left in the window as
+                    // Retry-After. Don't read the body here: slowapi answers a 429
+                    // with {"error": "Rate limit exceeded: 5 per 1 minute"}, so the
+                    // first number in it is the request count, not a wait time.
+                    const retryAfter = Number(err.response.headers["retry-after"]);
+                    const sec = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 60;
+                    setError(`Too many attempts. Please wait ${sec} seconds.`);
+                    setCooldown(sec);
                 } else {
                     setError(detail);
                 }
@@ -145,6 +156,13 @@ export default function Login() {
                     <h2 className="text-3xl font-black text-gray-900 tracking-tight">FitPass Login</h2>
                     <p className="text-sm text-gray-500 mt-2">Welcome back! Please enter your details.</p>
                 </div>
+
+                {/* SESSION EXPIRED NOTICE (401) - hidden once a real error shows up */}
+                {sessionExpired && !error && (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-xl mb-6 text-sm font-medium" role="status">
+                        ⏱️ Your session expired. Please sign in again to continue.
+                    </div>
+                )}
 
                 {/* GLOBAL ERROR MESSAGES */}
                 {error && (
@@ -216,9 +234,14 @@ export default function Login() {
 
                     {/* PASSWORD INPUT */}
                     <div>
-                        <label htmlFor="password" className="block text-sm font-bold text-gray-700 mb-1.5">
-                            Password
-                        </label>
+                        <div className="flex items-baseline justify-between mb-1.5">
+                            <label htmlFor="password" className="block text-sm font-bold text-gray-700">
+                                Password
+                            </label>
+                            <Link to="/forgot-password" className="text-xs text-blue-600 font-bold hover:text-blue-800 transition">
+                                Forgot your password?
+                            </Link>
+                        </div>
                         <input
                             id="password"
                             type="password"
