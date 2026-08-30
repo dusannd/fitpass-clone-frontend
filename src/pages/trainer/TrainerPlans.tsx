@@ -344,6 +344,10 @@ export default function TrainerPlans() {
         createPlan.mutate();
     };
 
+    // Shown above the publish button so the trainer can sanity-check the size of the
+    // session without counting ten cards by hand.
+    const totalSets = draft.exercises.reduce((sum, ex) => sum + (ex.sets || 0), 0);
+
     // One banner, three sources. A form validation message wins - the trainer typed
     // something wrong and that is the thing to fix first.
     const error = validationError
@@ -370,7 +374,7 @@ export default function TrainerPlans() {
             : "";
 
     return (
-        <div className="flex flex-col gap-8 max-w-5xl mx-auto h-full">
+        <div className="flex flex-col gap-8 max-w-6xl mx-auto h-full">
             {/* CREATE PLAN CARD */}
             <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm p-6 sm:p-8 border border-gray-200 dark:border-slate-800 transition-colors duration-200">
                 <h1 className="text-2xl font-bold text-gray-800 dark:text-white mb-2">Create Workout Plan</h1>
@@ -428,7 +432,7 @@ export default function TrainerPlans() {
                             id="plan-visibility"
                             value={draft.client_id ?? ""}
                             onChange={(e) => patchDraft({ client_id: e.target.value === "" ? null : Number(e.target.value) })}
-                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all cursor-pointer"
+                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all cursor-pointer"
                         >
                             <option value="">🌍 Public (Marketplace)</option>
                             {clients.map((client) => (
@@ -445,30 +449,33 @@ export default function TrainerPlans() {
                         </p>
                     </div>
 
-                    <div className="flex flex-col md:flex-row gap-6">
-                        <div className="w-full md:w-1/2">
-                            <label htmlFor="plan-name" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Plan Name</label>
-                            <input
-                                id="plan-name"
-                                type="text"
-                                value={draft.name}
-                                onChange={(e) => patchDraft({ name: e.target.value })}
-                                required
-                                placeholder="e.g. Upper Body Strength"
-                                className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-                            />
-                        </div>
-                        <div className="w-full md:w-1/2">
-                            <label htmlFor="plan-description" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Description</label>
-                            <input
-                                id="plan-description"
-                                type="text"
-                                value={draft.description}
-                                onChange={(e) => patchDraft({ description: e.target.value })}
-                                placeholder="Focus on chest and back."
-                                className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-                            />
-                        </div>
+                    {/* Name and description used to sit side by side at half width each,
+                        which is why a one-line description was clipped after about forty
+                        characters. They are stacked now, and the description is a textarea
+                        because it is prose - the marketplace card renders all of it. */}
+                    <div>
+                        <label htmlFor="plan-name" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Plan Name</label>
+                        <input
+                            id="plan-name"
+                            type="text"
+                            value={draft.name}
+                            onChange={(e) => patchDraft({ name: e.target.value })}
+                            required
+                            placeholder="e.g. Push Workout - Chest, Shoulders & Triceps"
+                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="plan-description" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5">Description</label>
+                        <textarea
+                            id="plan-description"
+                            rows={3}
+                            value={draft.description}
+                            onChange={(e) => patchDraft({ description: e.target.value })}
+                            placeholder="Complete upper body push session focusing on chest, shoulders and triceps."
+                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all resize-y"
+                        />
                     </div>
 
                     {/* EXERCISES SECTION */}
@@ -486,25 +493,62 @@ export default function TrainerPlans() {
 
                         <div className="flex flex-col gap-4">
                             {draft.exercises.map((ex, index) => (
-                                <div key={index} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm relative transition-colors">
-                                  <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-end">
+                                <div key={index} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-sm transition-colors">
 
-                                    <div className="flex-1 w-full lg:min-w-[140px]">
-                                        {/* Every field in this card is repeated once per exercise, so the
-                                            ids carry the row index - the same index the update handlers
-                                            already key on. Two rows must never share an id. */}
-                                        <label htmlFor={`ex-${index}-name`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Exercise Name</label>
-                                        <input
-                                            id={`ex-${index}-name`}
-                                            type="text"
-                                            value={ex.name}
-                                            onChange={(e) => updateExercise(index, "name", e.target.value)}
-                                            required
-                                            placeholder="e.g. Bench Press"
-                                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                        />
+                                  {/* --- CARD HEADER ---------------------------------------
+                                      Two exercise cards used to be visually identical, so a
+                                      trainer scrolling a ten-exercise plan had no way to tell
+                                      where they were. The number is the whole fix. */}
+                                  <div className="flex items-center justify-between gap-3 mb-4">
+                                    <div className="flex items-center gap-2.5">
+                                        <span className="flex items-center justify-center w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 text-xs font-black tabular-nums">
+                                            {index + 1}
+                                        </span>
+                                        <h4 className="text-sm font-bold text-gray-800 dark:text-gray-200">
+                                            Exercise {index + 1}
+                                        </h4>
                                     </div>
-                                    <div className="w-full lg:w-20">
+                                    {/* A ghost button until you reach for it. The old solid rose
+                                        block was visually heavier than the content it deletes. */}
+                                    <button
+                                        type="button"
+                                        onClick={() => removeExercise(index)}
+                                        className="shrink-0 text-gray-400 dark:text-gray-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 w-8 h-8 rounded-lg flex items-center justify-center transition-colors"
+                                        aria-label={`Remove exercise ${index + 1}`}
+                                        title="Remove exercise"
+                                    >
+                                        ✕
+                                    </button>
+                                  </div>
+
+                                  {/* --- NAME: ITS OWN FULL ROW ----------------------------
+                                      This is the one field with unbounded content, and it used
+                                      to be the most cramped: four fixed-width neighbours and a
+                                      checkbox ate ~460px of the row before it got anything, so
+                                      "Barbell Bench Press" was clipped mid-word.
+
+                                      Every field in this card is repeated once per exercise, so
+                                      the ids carry the row index - the same index the update
+                                      handlers already key on. Two rows must never share an id. */}
+                                  <div className="mb-4">
+                                    <label htmlFor={`ex-${index}-name`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Exercise Name</label>
+                                    <input
+                                        id={`ex-${index}-name`}
+                                        type="text"
+                                        value={ex.name}
+                                        onChange={(e) => updateExercise(index, "name", e.target.value)}
+                                        required
+                                        placeholder="e.g. Barbell Bench Press"
+                                        className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                    />
+                                  </div>
+
+                                  {/* --- THE NUMBERS ---------------------------------------
+                                      A grid, not fixed widths: these three share the row
+                                      proportionally instead of squeezing whatever is next
+                                      to them. */}
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 items-end">
+                                    <div>
                                         <label htmlFor={`ex-${index}-sets`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Sets</label>
                                         <input
                                             id={`ex-${index}-sets`}
@@ -516,7 +560,7 @@ export default function TrainerPlans() {
                                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                         />
                                     </div>
-                                    <div className="w-full lg:w-24">
+                                    <div>
                                         <label htmlFor={`ex-${index}-reps`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Reps</label>
                                         <input
                                             id={`ex-${index}-reps`}
@@ -528,7 +572,7 @@ export default function TrainerPlans() {
                                             className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                         />
                                     </div>
-                                    <div className="w-full lg:w-24">
+                                    <div>
                                         <label htmlFor={`ex-${index}-rest`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Rest (s)</label>
                                         <input
                                             id={`ex-${index}-rest`}
@@ -541,29 +585,24 @@ export default function TrainerPlans() {
                                         />
                                     </div>
 
-                                    {/* WEIGHT TOGGLE CHECKBOX */}
-                                    <div className="w-full lg:w-36 flex items-center justify-between bg-blue-50 dark:bg-blue-900/20 px-4 py-3 rounded-xl border border-blue-200 dark:border-blue-800/50 transition-colors">
-                                        <label htmlFor={`ex-${index}-weight`} className="text-xs font-bold text-blue-800 dark:text-blue-300 cursor-pointer select-none">
-                                            Track Weight?
-                                        </label>
+                                    {/* Still a real checkbox with a bound label - a styled
+                                        button would read as pressed/unpressed to nobody using
+                                        a screen reader. Only the look changed. */}
+                                    <label
+                                        htmlFor={`ex-${index}-weight`}
+                                        className="col-span-2 sm:col-span-1 flex items-center gap-2.5 cursor-pointer select-none bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/50 px-4 py-3 rounded-xl transition-colors"
+                                    >
                                         <input
                                             id={`ex-${index}-weight`}
                                             type="checkbox"
                                             checked={ex.requires_weight}
                                             onChange={(e) => updateExercise(index, "requires_weight", e.target.checked)}
-                                            className="w-4 h-4 text-blue-600 bg-white border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                                            className="h-4 w-4 rounded accent-blue-600 cursor-pointer"
                                         />
-                                    </div>
-
-                                    {/* REMOVE BUTTON */}
-                                    <button
-                                        type="button"
-                                        onClick={() => removeExercise(index)}
-                                        className="bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 p-3 rounded-xl transition-colors h-[46px] w-full lg:w-[46px] flex items-center justify-center font-bold"
-                                        title="Remove Exercise"
-                                    >
-                                        ✕
-                                    </button>
+                                        <span className="text-xs font-bold text-blue-800 dark:text-blue-300">
+                                            Track weight
+                                        </span>
+                                    </label>
                                   </div>
 
                                   {/*
@@ -571,11 +610,14 @@ export default function TrainerPlans() {
                                     tap-only. The target pre-fills their first set and the step
                                     tells their "+" button how much this machine actually adds.
                                     Hidden for bodyweight exercises, where neither means anything.
+
+                                    It sits in its own tinted panel so that toggling the checkbox
+                                    reveals a block instead of reflowing the row above it.
                                   */}
-                                  <div className="mt-4 pt-4 border-t border-gray-100 dark:border-slate-800 flex flex-col sm:flex-row gap-4">
-                                    {ex.requires_weight && (
-                                        <>
-                                            <div className="w-full sm:w-32">
+                                  {ex.requires_weight && (
+                                    <div className="mt-4 p-4 bg-blue-50/60 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/40 rounded-2xl transition-colors">
+                                        <div className="flex flex-col sm:flex-row gap-4">
+                                            <div className="w-full sm:w-36">
                                                 <label htmlFor={`ex-${index}-target`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Target (kg)</label>
                                                 <input
                                                     id={`ex-${index}-target`}
@@ -585,45 +627,80 @@ export default function TrainerPlans() {
                                                     value={ex.recommended_weight_kg ?? ""}
                                                     onChange={(e) => updateExercise(index, "recommended_weight_kg", e.target.value === "" ? null : parseFloat(e.target.value))}
                                                     placeholder="Optional"
-                                                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                                    className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
                                                 />
                                             </div>
 
-                                            <div className="w-full sm:w-56">
+                                            <div className="flex-1">
                                                 <label htmlFor={`ex-${index}-step`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Weight Step</label>
                                                 <select
                                                     id={`ex-${index}-step`}
                                                     value={ex.weight_step_kg}
                                                     onChange={(e) => updateExercise(index, "weight_step_kg", parseFloat(e.target.value))}
-                                                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all cursor-pointer"
+                                                    className="w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all cursor-pointer"
                                                 >
                                                     {WEIGHT_STEP_OPTIONS.map((opt) => (
                                                         <option key={opt.value} value={opt.value}>{opt.label}</option>
                                                     ))}
                                                 </select>
+                                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+                                                    How much this machine actually adds per tap. For dumbbells this is per dumbbell, not the pair.
+                                                </p>
                                             </div>
-                                        </>
-                                    )}
-
-                                    <div className="flex-1">
-                                        <label htmlFor={`ex-${index}-instructions`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Instructions</label>
-                                        <input
-                                            id={`ex-${index}-instructions`}
-                                            type="text"
-                                            value={ex.instructions}
-                                            onChange={(e) => updateExercise(index, "instructions", e.target.value)}
-                                            placeholder="e.g. 3 sec negatives, elbows tucked"
-                                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                        />
+                                        </div>
                                     </div>
+                                  )}
+
+                                  <div className="mt-4">
+                                    <label htmlFor={`ex-${index}-instructions`} className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">Instructions</label>
+                                    <textarea
+                                        id={`ex-${index}-instructions`}
+                                        rows={2}
+                                        value={ex.instructions}
+                                        onChange={(e) => updateExercise(index, "instructions", e.target.value)}
+                                        placeholder="e.g. 3 sec negatives, elbows tucked"
+                                        className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white p-3 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-y"
+                                    />
                                   </div>
                                 </div>
                             ))}
+
+                            {/* Removing the last exercise used to leave a blank panel, and the
+                                only feedback was a validation banner at submit time. */}
+                            {draft.exercises.length === 0 && (
+                                <div className="text-center py-10 px-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-2xl">
+                                    <p className="text-sm font-bold text-gray-700 dark:text-gray-300">No exercises yet</p>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 mb-4">A plan needs at least one before you can publish it.</p>
+                                    <button
+                                        type="button"
+                                        onClick={addExercise}
+                                        className="bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/40 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-400 text-xs font-bold py-2.5 px-4 rounded-xl transition-colors"
+                                    >
+                                        + Add your first exercise
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
 
-                    <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition-all shadow-md text-lg mt-2">
-                        Publish Workout Plan
+                    {/* The size of the thing about to be published, before publishing it.
+                        Counting sets by hand across ten cards is not something anyone does. */}
+                    {draft.exercises.length > 0 && (
+                        <p className="text-xs font-bold text-gray-500 dark:text-gray-400 text-center">
+                            {draft.exercises.length} {draft.exercises.length === 1 ? "exercise" : "exercises"}
+                            {" · "}
+                            {totalSets} {totalSets === 1 ? "set" : "sets"} total
+                        </p>
+                    )}
+
+                    {/* isPending was computed and never used, so a double click published
+                        the plan twice. */}
+                    <button
+                        type="submit"
+                        disabled={createPlan.isPending}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-xl transition-all shadow-md text-lg mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {createPlan.isPending ? "Publishing..." : "Publish Workout Plan"}
                     </button>
                 </form>
             </div>

@@ -96,6 +96,15 @@ export interface WeightStepOption {
 
 export const WEIGHT_STEP_OPTIONS: WeightStepOption[] = [
     { label: "Free Weights (2.5kg)", value: 2.5 },
+    // A dumbbell rack is its own thing: the light end climbs 2, 4, 6, 8 and the
+    // heavy end jumps in fives. "Free Weights" was the closest match before, and
+    // it is wrong in both halves of the rack.
+    //
+    // The step is PER DUMBBELL, not the pair. The client logs one weight_kg per
+    // set, so a trainer meaning 2x20kg has to be told which number to write -
+    // that is what the helper text under the picker says.
+    { label: "Dumbbells (2kg)", value: 2 },
+    { label: "Heavy Dumbbells (5kg)", value: 5 },
     { label: "Cable 10lbs (4.5kg)", value: 4.5 },
     { label: "Cable 15lbs (6.8kg)", value: 6.8 },
     { label: "Drop-pin (2.25kg)", value: 2.25 },
