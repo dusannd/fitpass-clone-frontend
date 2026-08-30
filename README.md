@@ -12,7 +12,7 @@ administrator all log into — and each of them sees a different product.
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF.svg?style=flat&logo=vite&logoColor=white)](https://vite.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC.svg?style=flat&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![React Query](https://img.shields.io/badge/React_Query-v5-FF4154.svg?style=flat&logo=reactquery&logoColor=white)](https://tanstack.com/query/latest)
-[![Vitest](https://img.shields.io/badge/Vitest-97_tests-6E9F18.svg?style=flat&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![Vitest](https://img.shields.io/badge/Vitest-118_tests-6E9F18.svg?style=flat&logo=vitest&logoColor=white)](https://vitest.dev/)
 [![Version](https://img.shields.io/badge/version-1.0.0-blueviolet.svg?style=flat)]()
 [![License](https://img.shields.io/badge/license-AGPLv3-green.svg?style=flat)](./LICENSE)
 
@@ -268,7 +268,7 @@ npm run test:watch   # vitest in watch mode
 
 ## Testing
 
-**86 tests across 7 files**, run with Vitest and React Testing Library in a jsdom environment.
+**118 tests across 11 files**, run with Vitest and React Testing Library in a jsdom environment.
 Tests sit next to the code they cover as `*.test.ts(x)` under `src/`, which means `tsc -b`
 type-checks them and `npm run build` fails on a broken one.
 
@@ -300,7 +300,14 @@ fails — a test written after the fix passes for free otherwise.
 
 The application ships as a **multi-stage Docker build** (`Dockerfile.prod`): Node compiles the
 bundle, then a fresh `nginx:alpine` image copies in nothing but `dist/`. No Node runtime, no
-`node_modules` and no source code reaches production — roughly 50 MB instead of 1 GB.
+`node_modules` and no source code reaches production — the application layer is about 1.5 MB on
+top of the Nginx base, rather than the gigabyte a Node runtime and its dependency tree drag
+along.
+
+> **Everything in `public/` is published verbatim.** Vite copies that folder into `dist/` as-is,
+> so anything parked there — a scratch folder, a screen recording, a downloaded tool — is served
+> to the open internet at its own URL. Directory listing is off, but a known path still resolves.
+> Keep `public/` to the handful of files the app actually needs.
 
 Nginx (`nginx.conf`) then does two jobs at once: it serves the static SPA with a `try_files`
 fallback so deep links and refreshes survive, and it reverse-proxies `/api` to the backend
