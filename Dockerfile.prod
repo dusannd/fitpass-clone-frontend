@@ -27,7 +27,17 @@
 # Node 22, NOT the node:18 you may see in older tutorials: vite@8 declares
 # `engines: { node: "^20.19.0 || >=22.12.0" }`, so Node 18 fails outright.
 # `-alpine` is a minimal Linux base, which keeps the build stage small too.
-FROM node:22-alpine AS builder
+#
+# `--platform=$BUILDPLATFORM` pins this stage to the machine doing the building
+# rather than the machine the image is FOR. The Oracle Cloud free tier is ARM
+# (Ampere A1), so an image built from an x86 laptop with
+# `docker buildx build --platform linux/arm64` would otherwise run `npm ci` and
+# `vite build` under QEMU emulation - minutes turn into tens of minutes. The
+# output of this stage is a folder of static JS and CSS, which has no
+# architecture at all, so building it natively is free of consequences. Only
+# stage 2 (nginx) has to match the target. On the server itself BUILDPLATFORM
+# and TARGETPLATFORM are the same thing and this changes nothing.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 
 WORKDIR /app
 
