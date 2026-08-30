@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
 import ConfirmModal from "../../components/ConfirmModal";
-import NumberField from "../../components/NumberField";
+import { useLocations } from "../../hooks/useLocations";
 
 // --- INTERFACES ---
 // Why the backend answers a refusal in a reason code rather than only in prose:
@@ -155,7 +155,17 @@ export default function WorkerDashboard() {
     // --- CHECK / OVERRIDE STATE ---
     // Only the banner text and the location live in useState now - the status card
     // itself comes straight off the mutation below.
-    const [locationId, setLocationId] = useState<number>(3);
+    // Which gym this desk is. It used to be a hardcoded 3 in a number box labelled
+    // "Location ID:" - the worker had to know, from nowhere, which building was which
+    // integer. Getting it wrong checks members into another branch, silently, because
+    // any existing id is accepted.
+    const locationsQuery = useLocations();
+    const locations = locationsQuery.data ?? [];
+
+    // null until the worker picks; derived fallback rather than a setState from an
+    // effect once the list lands.
+    const [selectedLocationId, setSelectedLocationId] = useState<number | null>(null);
+    const locationId = selectedLocationId ?? locations[0]?.id ?? 0;
     const [error, setError] = useState("");
     const [successMsg, setSuccessMsg] = useState("");
 
@@ -407,16 +417,25 @@ export default function WorkerDashboard() {
                                     Find a member
                                 </label>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-xs font-bold text-gray-500">Location ID:</span>
-                                    <NumberField
-                                        aria-label="Location ID"
-                                        min={1}
-                                        step={1}
-                                        inputMode="numeric"
-                                        value={locationId}
-                                        onValueChange={setLocationId}
-                                        className="w-12 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white text-center rounded text-xs p-1"
-                                    />
+                                    <span className="text-xs font-bold text-gray-500">Gym:</span>
+                                    {locationsQuery.isPending ? (
+                                        <span className="text-xs font-bold text-gray-400">loading...</span>
+                                    ) : locationsQuery.isError || locations.length === 0 ? (
+                                        <span className="text-xs font-bold text-rose-600 dark:text-rose-400">
+                                            {locationsQuery.isError ? "could not load gyms" : "none registered"}
+                                        </span>
+                                    ) : (
+                                        <select
+                                            aria-label="Gym location"
+                                            value={locationId}
+                                            onChange={(e) => setSelectedLocationId(Number(e.target.value))}
+                                            className="bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-900 dark:text-white rounded text-xs p-1 font-bold cursor-pointer focus:ring-2 focus:ring-blue-500 outline-none"
+                                        >
+                                            {locations.map((loc) => (
+                                                <option key={loc.id} value={loc.id}>{loc.name}</option>
+                                            ))}
+                                        </select>
+                                    )}
                                 </div>
                             </div>
 

@@ -4,7 +4,7 @@ import { Html5Qrcode, Html5QrcodeScannerState } from "html5-qrcode";
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
 import { playBeep, vibrate } from "../../utils/workout";
-import NumberField from "../../components/NumberField";
+import { useLocations } from "../../hooks/useLocations";
 
 // --- TYPES & INTERFACES ---
 interface ScanResponse {
@@ -19,16 +19,31 @@ export default function WorkerScanner() {
     const [searchParams] = useSearchParams();
     const kioskModeParam = searchParams.get("mode");
     const kioskLocParam = searchParams.get("loc");
-    const isKioskMode = kioskModeParam !== null && kioskLocParam !== null;
+
+    // Validated BEFORE it is allowed to lock anything. This used to check only that
+    // `loc` was present and then parseInt it with a fallback of 3, so a kiosk booted
+    // at ?mode=ENTRY&loc=main-st scanned every member into gym 3 - with the field
+    // disabled, so nobody at the door could correct it. Garbage now simply is not
+    // kiosk mode, and the worker gets the normal picker.
+    const kioskLocationId = (() => {
+        if (kioskLocParam === null) return null;
+        const parsed = Number(kioskLocParam);
+        return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+    })();
+    const isKioskMode = kioskModeParam !== null && kioskLocationId !== null;
 
     // --- STATE MANAGEMENT ---
     const [scanMode, setScanMode] = useState<"ENTRY" | "EXIT">(() =>
         kioskModeParam === "ENTRY" || kioskModeParam === "EXIT" ? kioskModeParam : "ENTRY"
     );
-    const [locationId, setLocationId] = useState<number>(() => {
-        const parsed = kioskLocParam ? parseInt(kioskLocParam, 10) : NaN;
-        return !isNaN(parsed) ? parsed : 3;
-    });
+    const locationsQuery = useLocations();
+    const locations = locationsQuery.data ?? [];
+
+    // null means "the worker has not picked one yet". Derived rather than written
+    // from an effect once the list arrives: setting state in an effect body is what
+    // react-hooks/set-state-in-effect exists to catch, and the fallback is one line.
+    const [selectedLocationId, setSelectedLocationId] = useState<number | null>(kioskLocationId);
+    const locationId = selectedLocationId ?? kioskLocationId ?? locations[0]?.id ?? 0;
     const [isScanning, setIsScanning] = useState<boolean>(true);
 
     // UI State for scan result overlay (Green/Red screen)
@@ -224,17 +239,28 @@ export default function WorkerScanner() {
                     </div>
 
                     <div className="w-full sm:w-1/3">
-                        <label htmlFor="scan-location" className="block text-xs font-bold text-gray-500 mb-1">Location ID</label>
-                        <NumberField
-                            id="scan-location"
-                            min={1}
-                            step={1}
-                            inputMode="numeric"
-                            value={locationId}
-                            onValueChange={setLocationId}
-                            disabled={isKioskMode}
-                            className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 p-3 rounded-xl font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-center transition-all disabled:opacity-60 disabled:cursor-not-allowed"
-                        />
+                        <label htmlFor="scan-location" className="block text-xs font-bold text-gray-500 mb-1">Location</label>
+                        {locationsQuery.isPending ? (
+                            <div className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 p-3 rounded-xl text-sm font-bold text-gray-400">
+                                Loading gyms...
+                            </div>
+                        ) : locationsQuery.isError || locations.length === 0 ? (
+                            <div className="w-full bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 p-3 rounded-xl text-sm font-bold text-rose-600 dark:text-rose-400">
+                                {locationsQuery.isError ? "Could not load gyms." : "No gyms registered."}
+                            </div>
+                        ) : (
+                            <select
+                                id="scan-location"
+                                value={locationId}
+                                onChange={(e) => setSelectedLocationId(Number(e.target.value))}
+                                disabled={isKioskMode}
+                                className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 p-3 rounded-xl font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                            >
+                                {locations.map((loc) => (
+                                    <option key={loc.id} value={loc.id}>{loc.name}</option>
+                                ))}
+                            </select>
+                        )}
                     </div>
                 </div>
             </div>
