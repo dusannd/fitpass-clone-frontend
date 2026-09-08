@@ -15,6 +15,9 @@ administrator all log into — and each of them sees a different product.
 [![Vitest](https://img.shields.io/badge/Vitest-124_tests-6E9F18.svg?style=flat&logo=vitest&logoColor=white)](https://vitest.dev/)
 [![Version](https://img.shields.io/badge/version-1.0.0-blueviolet.svg?style=flat)]()
 [![License](https://img.shields.io/badge/license-AGPLv3-green.svg?style=flat)](./LICENSE)
+[![Live](https://img.shields.io/badge/live-fitpassclone.top-brightgreen.svg?style=flat&logo=cloudflare&logoColor=white)](https://fitpassclone.top)
+
+**Live at [fitpassclone.top](https://fitpassclone.top)** — this client, served by Nginx in front of the FastAPI backend, behind a Cloudflare Tunnel.
 
 </div>
 
