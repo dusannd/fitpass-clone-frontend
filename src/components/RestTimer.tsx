@@ -4,75 +4,106 @@ import { playBeep, vibrate } from "../utils/workout";
 interface RestTimerProps {
     // How long this exercise rests for, in seconds.
     seconds: number;
-    // Fired once, when the countdown reaches zero.
+    // What the rest is for, e.g. "Bench Press · next: Set 3".
+    label?: string;
+    // Fired once, a few seconds after the countdown reaches zero.
     onDone: () => void;
-    // Fired when the user taps "Skip".
+    // Fired when the user taps "Skip" (or "Dismiss" once the rest is over).
     onSkip: () => void;
 }
 
 const RADIUS = 42;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+const EXTRA_SECONDS = 15;
+// How long the green "Go!" state stays on screen before the bar goes away.
+// Without it the bar vanished the instant it hit zero, and the one message
+// that tells you to start the next set was never actually visible.
+const GO_DISPLAY_MS = 4000;
 
 /**
- * Circular rest countdown shown right after a set is marked as done.
- * When it hits zero the phone buzzes and beeps, so you never have to watch the screen
- * between sets.
+ * Rest countdown bar, pinned to the bottom of the live workout modal.
+ * When it hits zero the phone buzzes and beeps, and the bar turns green for a
+ * moment, so you never have to watch the screen between sets.
  */
-export default function RestTimer({ seconds, onDone, onSkip }: RestTimerProps) {
+export default function RestTimer({ seconds, label, onDone, onSkip }: RestTimerProps) {
     const [remaining, setRemaining] = useState(seconds);
+    // The ring is drawn against the total, which "+15s" grows along with remaining.
+    const [total, setTotal] = useState(seconds);
+    const isFinished = remaining <= 0;
 
-    // The countdown fires onDone from inside an interval tick, so we keep the latest
-    // callback in a ref. Otherwise the interval would keep calling the version of the
-    // function that existed when it was created.
+    // --- 1. LATEST onDone ---
+    // The finish effect schedules onDone on a timeout, so we keep the latest
+    // callback in a ref instead of re-arming the timeout on every parent render.
     const onDoneRef = useRef(onDone);
     useEffect(() => {
         onDoneRef.current = onDone;
     }, [onDone]);
 
-    // Guard so the finish effects run exactly once, even if React re-renders us.
+    // Guard so the buzz and beep run exactly once, even if React re-runs the effect.
     const hasFinishedRef = useRef(false);
 
-    // No reset of `remaining` in here on purpose: the parent gives us a new key for
-    // every set, so a new rest period arrives as a fresh mount with fresh state.
+    // --- 2. COUNTDOWN ---
+    // The interval only counts. No reset of `remaining` in here on purpose: the
+    // parent gives us a new key for every set, so a new rest period arrives as a
+    // fresh mount with fresh state.
     useEffect(() => {
+        if (isFinished) return;
+
         const interval = setInterval(() => {
-            setRemaining((prev) => {
-                const next = prev - 1;
-
-                if (next <= 0 && !hasFinishedRef.current) {
-                    hasFinishedRef.current = true;
-                    clearInterval(interval);
-
-                    // 1. Buzz (ignored on iOS), 2. beep, 3. tell the parent we are done.
-                    vibrate([200, 100, 200]);
-                    playBeep();
-                    onDoneRef.current();
-                }
-
-                return Math.max(0, next);
-            });
+            setRemaining((prev) => Math.max(0, prev - 1));
         }, 1000);
 
         return () => clearInterval(interval);
-    }, [seconds]);
+    }, [isFinished]);
 
-    const progress = seconds > 0 ? remaining / seconds : 0;
+    // --- 3. FINISH ---
+    // Side effects live here, not inside the setRemaining updater: updaters must be
+    // pure, and StrictMode calls them twice.
+    useEffect(() => {
+        if (!isFinished) return;
+
+        if (!hasFinishedRef.current) {
+            hasFinishedRef.current = true;
+            // 1. Buzz (ignored on iOS), 2. beep.
+            vibrate([200, 100, 200]);
+            playBeep();
+        }
+
+        // 3. Keep "Go!" on screen for a moment, then tell the parent we are done.
+        const timeout = setTimeout(() => onDoneRef.current(), GO_DISPLAY_MS);
+        return () => clearTimeout(timeout);
+    }, [isFinished]);
+
+    const addTime = () => {
+        setRemaining((prev) => prev + EXTRA_SECONDS);
+        setTotal((prev) => prev + EXTRA_SECONDS);
+    };
+
+    const progress = total > 0 ? remaining / total : 0;
     const minutes = Math.floor(remaining / 60);
     const displaySeconds = remaining % 60;
 
     return (
-        <div className="flex items-center gap-4 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-2xl p-4">
+        <div
+            role="timer"
+            aria-live="polite"
+            className={`flex items-center gap-3 rounded-2xl border p-3 animate-menu-pop transition-colors ${
+                isFinished
+                    ? "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-800"
+                    : "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900/60"
+            }`}
+        >
             {/* CIRCULAR PROGRESS RING */}
-            <div className="relative h-24 w-24 shrink-0">
-                <svg className="h-full w-full -rotate-90" viewBox="0 0 100 100">
+            <div className="relative h-14 w-14 shrink-0">
+                <svg className="h-full w-full -rotate-90" viewBox="0 0 100 100" aria-hidden="true">
                     {/* Track */}
                     <circle
                         cx="50"
                         cy="50"
                         r={RADIUS}
                         fill="none"
-                        strokeWidth="8"
-                        className="stroke-blue-200 dark:stroke-blue-900"
+                        strokeWidth="10"
+                        className={isFinished ? "stroke-emerald-500" : "stroke-blue-200 dark:stroke-blue-900"}
                     />
                     {/* Remaining time */}
                     <circle
@@ -80,7 +111,7 @@ export default function RestTimer({ seconds, onDone, onSkip }: RestTimerProps) {
                         cy="50"
                         r={RADIUS}
                         fill="none"
-                        strokeWidth="8"
+                        strokeWidth="10"
                         strokeLinecap="round"
                         strokeDasharray={CIRCUMFERENCE}
                         strokeDashoffset={CIRCUMFERENCE * (1 - progress)}
@@ -88,26 +119,50 @@ export default function RestTimer({ seconds, onDone, onSkip }: RestTimerProps) {
                     />
                 </svg>
 
-                <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-2xl font-black text-blue-700 dark:text-blue-300 tabular-nums">
-                        {minutes > 0 ? `${minutes}:${String(displaySeconds).padStart(2, "0")}` : displaySeconds}
-                    </span>
-                </div>
+                {isFinished && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">✓</span>
+                    </div>
+                )}
             </div>
 
+            {/* TIME + LABEL */}
             <div className="flex-1 min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-wider text-blue-500 dark:text-blue-400">
-                    Rest
+                {isFinished ? (
+                    <p className="text-xl font-black text-emerald-700 dark:text-emerald-300 leading-tight">
+                        Go! Next set 💪
+                    </p>
+                ) : (
+                    <p className="text-3xl font-black text-gray-900 dark:text-white tabular-nums leading-none">
+                        {minutes}:{String(displaySeconds).padStart(2, "0")}
+                    </p>
+                )}
+                <p className={`mt-1 text-[11px] font-bold uppercase tracking-wider truncate ${
+                    isFinished ? "text-emerald-600 dark:text-emerald-400" : "text-blue-600 dark:text-blue-400"
+                }`}>
+                    {label ? `Rest · ${label}` : "Rest"}
                 </p>
-                <p className="text-base font-bold text-gray-900 dark:text-white">
-                    {remaining > 0 ? "Catch your breath" : "Go! Next set 💪"}
-                </p>
+            </div>
+
+            {/* ACTIONS */}
+            <div className="flex items-center gap-2 shrink-0">
+                {!isFinished && (
+                    <button
+                        type="button"
+                        onClick={addTime}
+                        className="h-11 px-3 rounded-xl bg-white dark:bg-slate-800 border border-blue-200 dark:border-slate-700 text-blue-700 dark:text-blue-300 text-sm font-black active:scale-95 touch-manipulation transition-transform"
+                    >
+                        +{EXTRA_SECONDS}s
+                    </button>
+                )}
                 <button
                     type="button"
                     onClick={onSkip}
-                    className="mt-2 text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                    className={`h-11 px-3 rounded-xl text-white text-sm font-black active:scale-95 touch-manipulation transition-transform ${
+                        isFinished ? "bg-emerald-600 hover:bg-emerald-700" : "bg-blue-600 hover:bg-blue-700"
+                    }`}
                 >
-                    Skip rest
+                    {isFinished ? "Dismiss" : "Skip"}
                 </button>
             </div>
         </div>
