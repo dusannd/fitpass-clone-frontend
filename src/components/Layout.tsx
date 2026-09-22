@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/axios";
 import { clearUserScopedStorage } from "../utils/storage";
 import Avatar from "./Avatar";
+import BrandLogo from "./BrandLogo";
 import RouteFallback from "./RouteFallback";
 
 
@@ -196,11 +197,18 @@ export default function Layout() {
             {/* SIDEBAR */}
             <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col transition-transform duration-300 md:static md:translate-x-0 ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"}`}>
 
-                {/* Logo i Status Članarine */}
+                {/* Logo (links home) and membership status */}
                 <div className="p-6 border-b border-gray-100 dark:border-slate-800/50">
-                    <h1 className="text-2xl font-black text-blue-600 dark:text-blue-500 tracking-tighter mb-4">
-                        FitPass<span className="text-gray-900 dark:text-white">Clone</span>
-                    </h1>
+                    {/* The explicit close covers a click while already on /dashboard,
+                        where the pathname reset above has nothing to react to */}
+                    <Link
+                        to="/dashboard"
+                        aria-label="Go to dashboard"
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className="inline-flex mb-4 hover:opacity-80 transition-opacity"
+                    >
+                        <BrandLogo />
+                    </Link>
 
                     <Link to="/profile" className="flex items-center gap-3 group">
                         <Avatar profile={user.profile} firstName={user.first_name} size="sm" />
@@ -301,9 +309,13 @@ export default function Layout() {
                         </svg>
                     </button>
 
-                    <div className="md:hidden font-black text-xl text-blue-600 dark:text-blue-500 ml-2">
-                        FP<span className="text-gray-900 dark:text-white">C</span>
-                    </div>
+                    <Link
+                        to="/dashboard"
+                        aria-label="Go to dashboard"
+                        className="md:hidden ml-2 inline-flex hover:opacity-80 transition-opacity"
+                    >
+                        <BrandLogo compact />
+                    </Link>
 
                     <div className="flex-1"></div>
 
