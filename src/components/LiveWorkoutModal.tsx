@@ -83,6 +83,29 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
         };
     }, [progress]);
 
+    // --- CURRENT SET ---
+    // The first unfinished set in plan order. It gets the highlight so you can see where
+    // you are at a glance. The other sets stay usable, just quieter, so doing exercises
+    // out of order still works.
+    const currentKey = useMemo(() => {
+        for (const ex of plan.exercises) {
+            const index = (progress[ex.id] ?? []).findIndex((s) => !s.done);
+            if (index !== -1) return `${ex.id}-${index}`;
+        }
+        return null;
+    }, [plan.exercises, progress]);
+
+    // --- REST TIMER LABEL ---
+    // The bar is pinned to the footer, away from the exercise card, so it says which
+    // exercise it belongs to and which set comes next.
+    const timerLabel = (() => {
+        if (!timer) return undefined;
+        const ex = plan.exercises.find((e) => e.id === timer.exerciseId);
+        if (!ex) return undefined;
+        const nextIndex = (progress[ex.id] ?? []).findIndex((s) => !s.done);
+        return nextIndex === -1 ? `${ex.name} · done` : `${ex.name} · next: Set ${nextIndex + 1}`;
+    })();
+
     // --- SET EDITING ---
     const patchSet = (exerciseId: number, index: number, patch: Partial<SetEntry>) => {
         setProgress((prev) => {
@@ -294,18 +317,26 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                                 );
                                             }
 
+                                            const isCurrent = currentKey === `${ex.id}-${setIndex}`;
+
                                             return (
                                                 <div
                                                     key={setIndex}
-                                                    className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl p-3 flex flex-col gap-3"
+                                                    className={`bg-white dark:bg-slate-900 border rounded-xl p-3 flex flex-col gap-3 transition-opacity ${
+                                                        isCurrent
+                                                            ? "border-blue-500 ring-2 ring-blue-500/30"
+                                                            : "border-gray-200 dark:border-slate-700 opacity-60 hover:opacity-100 focus-within:opacity-100"
+                                                    }`}
                                                 >
                                                     <div className="flex items-center justify-between">
-                                                        <span className="text-[10px] font-black uppercase tracking-wider text-gray-400">
+                                                        <span className={`text-[10px] font-black uppercase tracking-wider ${
+                                                            isCurrent ? "text-blue-600 dark:text-blue-400" : "text-gray-400"
+                                                        }`}>
                                                             Set {setIndex + 1}
                                                         </span>
-                                                        {ex.requires_weight && (
-                                                            <span className="text-[10px] font-bold text-gray-400">
-                                                                +{step} kg per tap
+                                                        {isCurrent && (
+                                                            <span className="text-[10px] font-black uppercase tracking-wider text-white bg-blue-600 px-2 py-0.5 rounded-full">
+                                                                Up next
                                                             </span>
                                                         )}
                                                     </div>
@@ -317,9 +348,9 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                                                 type="button"
                                                                 onClick={() => adjustWeight(ex, setIndex, -1)}
                                                                 aria-label={`Remove ${step} kg`}
-                                                                className="h-12 w-12 shrink-0 rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 text-2xl font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform hover:bg-gray-200 dark:hover:bg-slate-700"
+                                                                className="h-12 min-w-14 px-2 shrink-0 rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 text-base font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform hover:bg-gray-200 dark:hover:bg-slate-700"
                                                             >
-                                                                −
+                                                                −{step}
                                                             </button>
 
                                                             <div className="flex-1 relative">
@@ -328,7 +359,7 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                                                     inputMode="decimal"
                                                                     step="0.25"
                                                                     min="0"
-                                                                    placeholder="0"
+                                                                    placeholder="–"
                                                                     value={set.weight ?? ""}
                                                                     onChange={(e) =>
                                                                         patchSet(ex.id, setIndex, {
@@ -336,7 +367,7 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                                                             touched: true,
                                                                         })
                                                                     }
-                                                                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white py-3 pr-10 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl font-black"
+                                                                    className="no-spinner w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white py-3 pr-10 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl font-black"
                                                                 />
                                                                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 pointer-events-none">
                                                                     kg
@@ -347,9 +378,9 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                                                 type="button"
                                                                 onClick={() => adjustWeight(ex, setIndex, 1)}
                                                                 aria-label={`Add ${step} kg`}
-                                                                className="h-12 w-12 shrink-0 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-2xl font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform"
+                                                                className="h-12 min-w-14 px-2 shrink-0 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-base font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform"
                                                             >
-                                                                +
+                                                                +{step}
                                                             </button>
                                                         </div>
                                                     )}
@@ -377,7 +408,7 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                                                             touched: true,
                                                                         })
                                                                     }
-                                                                    className="w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white py-3 pr-12 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl font-black"
+                                                                    className="no-spinner w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white py-3 pr-12 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl font-black"
                                                                 />
                                                                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 pointer-events-none">
                                                                     reps
@@ -398,25 +429,16 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                                             onClick={() => markSetDone(ex, setIndex)}
                                                             className="h-12 px-5 shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black flex items-center justify-center gap-1.5 active:scale-95 touch-manipulation transition-transform shadow-sm"
                                                         >
-                                                            ✔️ Done
+                                                            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                                <path d="M5 12.5l4.5 4.5L19 7.5" />
+                                                            </svg>
+                                                            Done
                                                         </button>
                                                     </div>
                                                 </div>
                                             );
                                         })}
                                     </div>
-
-                                    {/* REST TIMER - lives under the exercise it belongs to */}
-                                    {timer?.exerciseId === ex.id && (
-                                        <div className="mt-3">
-                                            <RestTimer
-                                                key={timer.runId}
-                                                seconds={timer.seconds}
-                                                onDone={() => setTimer(null)}
-                                                onSkip={() => setTimer(null)}
-                                            />
-                                        </div>
-                                    )}
                                 </div>
                             );
                         })}
@@ -440,6 +462,20 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
 
                 {/* FOOTER */}
                 <div className="p-4 sm:p-6 border-t border-gray-100 dark:border-slate-800 bg-white dark:bg-slate-900">
+                    {/* REST TIMER - pinned here, not under the exercise card. Under the
+                        card it rendered below the last set, which was usually off screen,
+                        so nobody noticed the rest had started. */}
+                    {timer && (
+                        <div className="mb-3">
+                            <RestTimer
+                                key={timer.runId}
+                                seconds={timer.seconds}
+                                label={timerLabel}
+                                onDone={() => setTimer(null)}
+                                onSkip={() => setTimer(null)}
+                            />
+                        </div>
+                    )}
                     {error && (
                         <div className="bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 p-3 rounded-xl mb-3 font-bold text-sm border border-red-200 dark:border-red-800">
                             {error}

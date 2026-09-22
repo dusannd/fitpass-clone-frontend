@@ -20,6 +20,19 @@
         animation: menu-pop 0.15s ease-out;
     }
 
+    /* Hides the browser's own up/down arrows on a number input. Only for fields
+       that already sit between our own -/+ buttons, where two sets of controls
+       for the same number just confuse people. */
+    .no-spinner {
+        appearance: textfield;
+        -moz-appearance: textfield;
+    }
+    .no-spinner::-webkit-inner-spin-button,
+    .no-spinner::-webkit-outer-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+
     /* Respect the "reduce motion" setting from the operating system */
     @media (prefers-reduced-motion: reduce) {
         .animate-menu-pop {
