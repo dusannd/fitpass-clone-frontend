@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "../api/axios";
 import { errorDetail } from "../utils/errors";
@@ -58,12 +58,27 @@ const buildInitialProgress = (plan: WorkoutPlan): WorkoutProgress => {
     return progress;
 };
 
+/**
+ * The first exercise, in plan order, that still has a set left to do. It decides
+ * which card is open, and null means the whole workout is ticked off.
+ */
+const firstUnfinishedExerciseId = (plan: WorkoutPlan, progress: WorkoutProgress): number | null => {
+    const ex = plan.exercises.find((e) => (progress[e.id] ?? []).some((s) => !s.done));
+    return ex ? ex.id : null;
+};
+
 export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkoutModalProps) {
     const [progress, setProgress] = useState<WorkoutProgress>(() => buildInitialProgress(plan));
     const [notes, setNotes] = useState("");
     const [timer, setTimer] = useState<ActiveTimer | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState("");
+
+    // --- ACCORDION ---
+    // Only one exercise card is open at a time. With every set of every exercise on
+    // screen, a phone had to scroll past the whole plan to find the set you are on.
+    const [openId, setOpenId] = useState<number | null>(() => plan.exercises[0]?.id ?? null);
+    const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
     // Escape closes the modal, same as the profile menu in Layout.
     useEffect(() => {
@@ -88,12 +103,10 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
     // you are at a glance. The other sets stay usable, just quieter, so doing exercises
     // out of order still works.
     const currentKey = useMemo(() => {
-        for (const ex of plan.exercises) {
-            const index = (progress[ex.id] ?? []).findIndex((s) => !s.done);
-            if (index !== -1) return `${ex.id}-${index}`;
-        }
-        return null;
-    }, [plan.exercises, progress]);
+        const exId = firstUnfinishedExerciseId(plan, progress);
+        if (exId === null) return null;
+        return `${exId}-${(progress[exId] ?? []).findIndex((s) => !s.done)}`;
+    }, [plan, progress]);
 
     // --- REST TIMER LABEL ---
     // The bar is pinned to the footer, away from the exercise card, so it says which
@@ -151,11 +164,46 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
             return { ...prev, [ex.id]: next };
         });
 
+        // That was the last open set of this exercise: close its card and open the
+        // next exercise that still has work left, so the phone never has to scroll
+        // to find it. Worked out from this render's progress - the updater above has
+        // not run yet. The search starts AFTER this exercise and wraps around, so an
+        // exercise skipped earlier comes back last instead of pulling you backwards.
+        const setsLeft = (progress[ex.id] ?? []).filter((s, i) => i !== index && !s.done).length;
+        if (setsLeft === 0) {
+            const start = plan.exercises.findIndex((e) => e.id === ex.id);
+            const ordered = [...plan.exercises.slice(start + 1), ...plan.exercises.slice(0, start)];
+            const nextEx = ordered.find((e) => (progress[e.id] ?? []).some((s) => !s.done));
+            openExercise(nextEx ? nextEx.id : null);
+        }
+
         // Start resting immediately - nobody wants to hunt for a start button mid set.
         const rest = ex.rest_time_seconds;
         if (rest && rest > 0) {
             setTimer((prev) => ({ exerciseId: ex.id, seconds: rest, runId: (prev?.runId ?? 0) + 1 }));
         }
+    };
+
+    // Opens a card and brings its header to the top of the scroll area. The scroll
+    // waits one frame so it measures the layout after the previous card collapsed.
+    const openExercise = (exerciseId: number | null) => {
+        setOpenId(exerciseId);
+        if (exerciseId === null) return;
+
+        const reduceMotion =
+            typeof window.matchMedia === "function" &&
+            window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        requestAnimationFrame(() => {
+            cardRefs.current[exerciseId]?.scrollIntoView({
+                block: "start",
+                behavior: reduceMotion ? "auto" : "smooth",
+            });
+        });
+    };
+
+    const toggleExercise = (exerciseId: number) => {
+        if (openId === exerciseId) setOpenId(null);
+        else openExercise(exerciseId);
     };
 
     const undoSet = (exerciseId: number, index: number) => {
@@ -248,18 +296,33 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                             const step = ex.weight_step_kg > 0 ? ex.weight_step_kg : 2.5;
                             const doneCount = sets.filter((s) => s.done).length;
                             const isFinished = doneCount === sets.length && sets.length > 0;
+                            const isOpen = openId === ex.id;
+                            const bodyId = `exercise-${ex.id}-sets`;
 
                             return (
                                 <div
                                     key={ex.id}
-                                    className={`rounded-2xl border p-4 sm:p-5 transition-colors ${
+                                    ref={(el) => {
+                                        cardRefs.current[ex.id] = el;
+                                    }}
+                                    className={`scroll-mt-1 rounded-2xl border transition-colors ${
+                                        isOpen ? "p-4 sm:p-5" : "px-4 py-3 sm:px-5"
+                                    } ${
                                         isFinished
                                             ? "bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/50"
                                             : "bg-gray-50 dark:bg-slate-800/50 border-gray-200 dark:border-slate-700"
                                     }`}
                                 >
-                                    {/* EXERCISE HEADER */}
-                                    <div className="flex items-start gap-3 mb-4">
+                                    {/* EXERCISE HEADER - tap to open or close the card */}
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleExercise(ex.id)}
+                                        aria-expanded={isOpen}
+                                        aria-controls={bodyId}
+                                        className={`w-full flex items-center gap-3 text-left rounded-xl touch-manipulation focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                                            isOpen ? "mb-4" : ""
+                                        }`}
+                                    >
                                         <div className={`h-10 w-10 shrink-0 rounded-full flex items-center justify-center font-black ${
                                             isFinished
                                                 ? "bg-emerald-500 text-white"
@@ -268,177 +331,207 @@ export default function LiveWorkoutModal({ plan, onClose, onSaved }: LiveWorkout
                                             {isFinished ? "✓" : exIndex + 1}
                                         </div>
                                         <div className="min-w-0 flex-1">
-                                            <p className="font-bold text-gray-900 dark:text-white text-lg leading-tight">{ex.name}</p>
-                                            <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
+                                            <p className={`font-bold text-gray-900 dark:text-white leading-tight ${isOpen ? "text-lg" : "text-base truncate"}`}>
+                                                {ex.name}
+                                            </p>
+                                            <p className="text-sm font-semibold text-gray-500 dark:text-gray-400 truncate">
                                                 Target: {ex.sets} × {ex.reps}
                                                 {ex.requires_weight && ex.recommended_weight_kg !== null && (
                                                     <> @ {ex.recommended_weight_kg} kg</>
                                                 )}
                                             </p>
                                         </div>
-                                    </div>
+                                        <span className={`shrink-0 text-xs font-black px-2 py-1 rounded-full ${
+                                            isFinished
+                                                ? "bg-emerald-500 text-white"
+                                                : doneCount > 0
+                                                    ? "bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400"
+                                                    : "bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300"
+                                        }`}>
+                                            {doneCount}/{sets.length}
+                                        </span>
+                                        <svg
+                                            viewBox="0 0 24 24"
+                                            className={`h-5 w-5 shrink-0 text-gray-400 transition-transform motion-reduce:transition-none ${isOpen ? "rotate-180" : ""}`}
+                                            fill="none"
+                                            stroke="currentColor"
+                                            strokeWidth={2.5}
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                            aria-hidden="true"
+                                        >
+                                            <path d="M6 9l6 6 6-6" />
+                                        </svg>
+                                    </button>
 
-                                    {/* FORM CUES FROM THE TRAINER */}
-                                    {ex.instructions && (
-                                        <div className="mb-4 flex gap-2 items-start bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-xl p-3">
-                                            <span className="text-base leading-none mt-0.5">💡</span>
-                                            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300 leading-relaxed">
-                                                {ex.instructions}
-                                            </p>
+                                    {/* Closed cards render no body at all, so no hidden inputs stay
+                                        focusable. The set values live in `progress`, not in the
+                                        inputs, so closing a card loses nothing. */}
+                                    {isOpen && (
+                                        <div id={bodyId}>
+                                            {/* FORM CUES FROM THE TRAINER */}
+                                            {ex.instructions && (
+                                                <div className="mb-4 flex gap-2 items-start bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 rounded-xl p-3">
+                                                    <span className="text-base leading-none mt-0.5">💡</span>
+                                                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300 leading-relaxed">
+                                                        {ex.instructions}
+                                                    </p>
+                                                </div>
+                                            )}
+
+                                            {/* SETS */}
+                                            <div className="flex flex-col gap-2.5">
+                                                {sets.map((set, setIndex) => {
+                                                    if (set.done) {
+                                                        // Finished sets collapse so the screen always shows what is next.
+                                                        return (
+                                                            <div
+                                                                key={setIndex}
+                                                                className="flex items-center justify-between gap-3 bg-emerald-500 text-white rounded-xl px-4 py-3"
+                                                            >
+                                                                <span className="font-black text-sm">
+                                                                    Set {setIndex + 1}
+                                                                </span>
+                                                                <span className="font-bold text-sm">
+                                                                    {ex.requires_weight && set.weight !== null
+                                                                        ? `${set.weight} kg × ${set.reps}`
+                                                                        : `${set.reps} reps`}
+                                                                </span>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => undoSet(ex.id, setIndex)}
+                                                                    className="text-[10px] font-black uppercase tracking-wider bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded-lg transition-colors"
+                                                                >
+                                                                    Undo
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    }
+
+                                                    const isCurrent = currentKey === `${ex.id}-${setIndex}`;
+
+                                                    return (
+                                                        <div
+                                                            key={setIndex}
+                                                            className={`bg-white dark:bg-slate-900 border rounded-xl p-3 flex flex-col gap-3 transition-opacity ${
+                                                                isCurrent
+                                                                    ? "border-blue-500 ring-2 ring-blue-500/30"
+                                                                    : "border-gray-200 dark:border-slate-700 opacity-60 hover:opacity-100 focus-within:opacity-100"
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center justify-between">
+                                                                <span className={`text-[10px] font-black uppercase tracking-wider ${
+                                                                    isCurrent ? "text-blue-600 dark:text-blue-400" : "text-gray-400"
+                                                                }`}>
+                                                                    Set {setIndex + 1}
+                                                                </span>
+                                                                {isCurrent && (
+                                                                    <span className="text-[10px] font-black uppercase tracking-wider text-white bg-blue-600 px-2 py-0.5 rounded-full">
+                                                                        Up next
+                                                                    </span>
+                                                                )}
+                                                            </div>
+
+                                                            {/* WEIGHT STEPPER */}
+                                                            {ex.requires_weight && (
+                                                                <div className="flex items-center gap-2">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => adjustWeight(ex, setIndex, -1)}
+                                                                        aria-label={`Remove ${step} kg`}
+                                                                        className="h-12 min-w-14 px-2 shrink-0 rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 text-base font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform hover:bg-gray-200 dark:hover:bg-slate-700"
+                                                                    >
+                                                                        −{step}
+                                                                    </button>
+
+                                                                    <div className="flex-1 relative">
+                                                                        <input
+                                                                            type="number"
+                                                                            inputMode="decimal"
+                                                                            step="0.25"
+                                                                            min="0"
+                                                                            placeholder="–"
+                                                                            value={set.weight ?? ""}
+                                                                            onChange={(e) =>
+                                                                                patchSet(ex.id, setIndex, {
+                                                                                    weight: e.target.value === "" ? null : parseFloat(e.target.value),
+                                                                                    touched: true,
+                                                                                })
+                                                                            }
+                                                                            className="no-spinner w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white py-3 pr-10 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl font-black"
+                                                                        />
+                                                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 pointer-events-none">
+                                                                            kg
+                                                                        </span>
+                                                                    </div>
+
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => adjustWeight(ex, setIndex, 1)}
+                                                                        aria-label={`Add ${step} kg`}
+                                                                        className="h-12 min-w-14 px-2 shrink-0 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-base font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform"
+                                                                    >
+                                                                        +{step}
+                                                                    </button>
+                                                                </div>
+                                                            )}
+
+                                                            {/* REPS STEPPER + DONE */}
+                                                            <div className="flex items-center gap-2">
+                                                                <div className="flex items-center gap-2 flex-1">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => adjustReps(ex.id, setIndex, -1)}
+                                                                        aria-label="One rep less"
+                                                                        className="h-12 w-12 shrink-0 rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 text-xl font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform hover:bg-gray-200 dark:hover:bg-slate-700"
+                                                                    >
+                                                                        −
+                                                                    </button>
+                                                                    <div className="flex-1 relative">
+                                                                        <NumberField
+                                                                            inputMode="numeric"
+                                                                            min={1}
+                                                                            step={1}
+                                                                            value={set.reps}
+                                                                            onValueChange={(reps) =>
+                                                                                patchSet(ex.id, setIndex, {
+                                                                                    reps,
+                                                                                    touched: true,
+                                                                                })
+                                                                            }
+                                                                            className="no-spinner w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white py-3 pr-12 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl font-black"
+                                                                        />
+                                                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 pointer-events-none">
+                                                                            reps
+                                                                        </span>
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => adjustReps(ex.id, setIndex, 1)}
+                                                                        aria-label="One rep more"
+                                                                        className="h-12 w-12 shrink-0 rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 text-xl font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform hover:bg-gray-200 dark:hover:bg-slate-700"
+                                                                    >
+                                                                        +
+                                                                    </button>
+                                                                </div>
+
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => markSetDone(ex, setIndex)}
+                                                                    className="h-12 px-5 shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black flex items-center justify-center gap-1.5 active:scale-95 touch-manipulation transition-transform shadow-sm"
+                                                                >
+                                                                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                                        <path d="M5 12.5l4.5 4.5L19 7.5" />
+                                                                    </svg>
+                                                                    Done
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
                                         </div>
                                     )}
-
-                                    {/* SETS */}
-                                    <div className="flex flex-col gap-2.5">
-                                        {sets.map((set, setIndex) => {
-                                            if (set.done) {
-                                                // Finished sets collapse so the screen always shows what is next.
-                                                return (
-                                                    <div
-                                                        key={setIndex}
-                                                        className="flex items-center justify-between gap-3 bg-emerald-500 text-white rounded-xl px-4 py-3"
-                                                    >
-                                                        <span className="font-black text-sm">
-                                                            Set {setIndex + 1}
-                                                        </span>
-                                                        <span className="font-bold text-sm">
-                                                            {ex.requires_weight && set.weight !== null
-                                                                ? `${set.weight} kg × ${set.reps}`
-                                                                : `${set.reps} reps`}
-                                                        </span>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => undoSet(ex.id, setIndex)}
-                                                            className="text-[10px] font-black uppercase tracking-wider bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded-lg transition-colors"
-                                                        >
-                                                            Undo
-                                                        </button>
-                                                    </div>
-                                                );
-                                            }
-
-                                            const isCurrent = currentKey === `${ex.id}-${setIndex}`;
-
-                                            return (
-                                                <div
-                                                    key={setIndex}
-                                                    className={`bg-white dark:bg-slate-900 border rounded-xl p-3 flex flex-col gap-3 transition-opacity ${
-                                                        isCurrent
-                                                            ? "border-blue-500 ring-2 ring-blue-500/30"
-                                                            : "border-gray-200 dark:border-slate-700 opacity-60 hover:opacity-100 focus-within:opacity-100"
-                                                    }`}
-                                                >
-                                                    <div className="flex items-center justify-between">
-                                                        <span className={`text-[10px] font-black uppercase tracking-wider ${
-                                                            isCurrent ? "text-blue-600 dark:text-blue-400" : "text-gray-400"
-                                                        }`}>
-                                                            Set {setIndex + 1}
-                                                        </span>
-                                                        {isCurrent && (
-                                                            <span className="text-[10px] font-black uppercase tracking-wider text-white bg-blue-600 px-2 py-0.5 rounded-full">
-                                                                Up next
-                                                            </span>
-                                                        )}
-                                                    </div>
-
-                                                    {/* WEIGHT STEPPER */}
-                                                    {ex.requires_weight && (
-                                                        <div className="flex items-center gap-2">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => adjustWeight(ex, setIndex, -1)}
-                                                                aria-label={`Remove ${step} kg`}
-                                                                className="h-12 min-w-14 px-2 shrink-0 rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 text-base font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform hover:bg-gray-200 dark:hover:bg-slate-700"
-                                                            >
-                                                                −{step}
-                                                            </button>
-
-                                                            <div className="flex-1 relative">
-                                                                <input
-                                                                    type="number"
-                                                                    inputMode="decimal"
-                                                                    step="0.25"
-                                                                    min="0"
-                                                                    placeholder="–"
-                                                                    value={set.weight ?? ""}
-                                                                    onChange={(e) =>
-                                                                        patchSet(ex.id, setIndex, {
-                                                                            weight: e.target.value === "" ? null : parseFloat(e.target.value),
-                                                                            touched: true,
-                                                                        })
-                                                                    }
-                                                                    className="no-spinner w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white py-3 pr-10 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl font-black"
-                                                                />
-                                                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 pointer-events-none">
-                                                                    kg
-                                                                </span>
-                                                            </div>
-
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => adjustWeight(ex, setIndex, 1)}
-                                                                aria-label={`Add ${step} kg`}
-                                                                className="h-12 min-w-14 px-2 shrink-0 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-base font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform"
-                                                            >
-                                                                +{step}
-                                                            </button>
-                                                        </div>
-                                                    )}
-
-                                                    {/* REPS STEPPER + DONE */}
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="flex items-center gap-2 flex-1">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => adjustReps(ex.id, setIndex, -1)}
-                                                                aria-label="One rep less"
-                                                                className="h-12 w-12 shrink-0 rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 text-xl font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform hover:bg-gray-200 dark:hover:bg-slate-700"
-                                                            >
-                                                                −
-                                                            </button>
-                                                            <div className="flex-1 relative">
-                                                                <NumberField
-                                                                    inputMode="numeric"
-                                                                    min={1}
-                                                                    step={1}
-                                                                    value={set.reps}
-                                                                    onValueChange={(reps) =>
-                                                                        patchSet(ex.id, setIndex, {
-                                                                            reps,
-                                                                            touched: true,
-                                                                        })
-                                                                    }
-                                                                    className="no-spinner w-full bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-600 text-gray-900 dark:text-white py-3 pr-12 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-center text-xl font-black"
-                                                                />
-                                                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 pointer-events-none">
-                                                                    reps
-                                                                </span>
-                                                            </div>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => adjustReps(ex.id, setIndex, 1)}
-                                                                aria-label="One rep more"
-                                                                className="h-12 w-12 shrink-0 rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-200 text-xl font-black flex items-center justify-center active:scale-95 touch-manipulation transition-transform hover:bg-gray-200 dark:hover:bg-slate-700"
-                                                            >
-                                                                +
-                                                            </button>
-                                                        </div>
-
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => markSetDone(ex, setIndex)}
-                                                            className="h-12 px-5 shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black flex items-center justify-center gap-1.5 active:scale-95 touch-manipulation transition-transform shadow-sm"
-                                                        >
-                                                            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                                                <path d="M5 12.5l4.5 4.5L19 7.5" />
-                                                            </svg>
-                                                            Done
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
                                 </div>
                             );
                         })}
