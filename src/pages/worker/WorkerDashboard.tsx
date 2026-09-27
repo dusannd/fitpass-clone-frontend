@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
 import ConfirmModal from "../../components/ConfirmModal";
+import RefreshButton from "../../components/RefreshButton";
 import { useLocations } from "../../hooks/useLocations";
 
 // --- INTERFACES ---
@@ -565,14 +566,7 @@ export default function WorkerDashboard() {
                             <p className="text-xs text-gray-500">Members currently inside the gym.</p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                            <button
-                                onClick={() => void insideQuery.refetch()}
-                                disabled={insideQuery.isFetching}
-                                title="Refresh the attendance list"
-                                className="px-3 py-1.5 rounded-lg text-xs font-bold border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 transition disabled:opacity-50"
-                            >
-                                {insideQuery.isFetching ? "⏳" : "🔄"} Refresh
-                            </button>
+                            <RefreshButton onRefresh={() => insideQuery.refetch()} label="Refresh the attendance list" />
                             <span className="bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-400 font-black px-3 py-1 rounded-full text-sm">
                                 {insideTotal} Active
                             </span>
@@ -654,14 +648,7 @@ export default function WorkerDashboard() {
                         <p className="text-xs text-gray-500">Every entry, exit and denied scan, newest first.</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                        <button
-                            onClick={() => void logsQuery.refetch()}
-                            disabled={logsQuery.isFetching}
-                            title="Refresh the activity log"
-                            className="px-3 py-1.5 rounded-lg text-xs font-bold border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 transition disabled:opacity-50"
-                        >
-                            {logsQuery.isFetching ? "⏳" : "🔄"} Refresh
-                        </button>
+                        <RefreshButton onRefresh={() => logsQuery.refetch()} label="Refresh the activity log" />
                         <span className="bg-gray-100 dark:bg-slate-800 text-gray-700 dark:text-gray-300 font-black px-3 py-1 rounded-full text-sm">
                             {logTotal} Total
                         </span>
