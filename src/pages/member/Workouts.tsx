@@ -5,6 +5,7 @@ import { errorDetail } from "../../utils/errors";
 import { ProgressCard } from "../../components/ProgressCard";
 import LiveWorkoutModal from "../../components/LiveWorkoutModal";
 import SessionDetailModal from "../../components/SessionDetailModal";
+import PlanPreviewModal from "../../components/PlanPreviewModal";
 import Avatar from "../../components/Avatar";
 import MyTrainerChip from "../../components/MyTrainerChip";
 import { parseGoals } from "../../utils/profile";
@@ -62,6 +63,20 @@ const CARD_BADGE: Record<PlanCardType, { label: string; className: string }> = {
     },
 };
 
+// The call to action. The card and the plan preview both read it from here, so the
+// button says and looks the same in both places.
+const CARD_CTA: Record<PlanCardType, { label: string; className: string }> = {
+    assigned: { label: "Start Workout 🚀", className: "bg-emerald-600 hover:bg-emerald-700 text-white" },
+    my_plan: { label: "Start Workout 🚀", className: "bg-blue-600 hover:bg-blue-700 text-white" },
+    explore: {
+        label: "Save & Follow Plan",
+        className: "bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-900 dark:text-white",
+    },
+};
+
+// How many exercises a card lists before it points to the preview.
+const CARD_EXERCISE_LIMIT = 3;
+
 export default function Workouts() {
     // --- STATE ---
     const queryClient = useQueryClient();
@@ -79,6 +94,9 @@ export default function Workouts() {
     // Modal state
     const [activeWorkout, setActiveWorkout] = useState<WorkoutPlan | null>(null);
     const [detailSession, setDetailSession] = useState<WorkoutSession | null>(null);
+    // The full plan, opened from a card before the workout starts. Same shape as
+    // RemovedPlan - the preview needs the card type to know which button to offer.
+    const [previewPlan, setPreviewPlan] = useState<RemovedPlan | null>(null);
 
     // The last plan removed, so an accidental tap is one click away from being undone.
     const [removedPlan, setRemovedPlan] = useState<RemovedPlan | null>(null);
@@ -226,6 +244,13 @@ export default function Workouts() {
     const removePlan = (plan: WorkoutPlan, type: PlanCardType) =>
         removePlanMutation.mutate({ plan, type });
 
+    // What the card's main button does. The plan preview calls the same function, so
+    // "Start Workout" there is exactly "Start Workout" on the card.
+    const runCardAction = (plan: WorkoutPlan, type: PlanCardType) => {
+        if (type === "explore") followPlan.mutate(plan.id);
+        else setActiveWorkout(plan);
+    };
+
     const undoRemove = () => {
         if (removedPlan) undoRemoveMutation.mutate(removedPlan);
     };
@@ -252,6 +277,8 @@ export default function Workouts() {
     // cards that happen to wear an emerald accent, not a separate widget.
     const renderPlanCard = (plan: WorkoutPlan, type: PlanCardType) => {
         const badge = CARD_BADGE[type];
+        const cta = CARD_CTA[type];
+        const hiddenCount = plan.exercises.length - CARD_EXERCISE_LIMIT;
 
         return (
             <div
@@ -270,43 +297,47 @@ export default function Workouts() {
                     </div>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{plan.description}</p>
 
-                    <div className="bg-gray-50 dark:bg-slate-800/50 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50 mb-6">
+                    {/* The whole summary box opens the plan preview. The card only has room
+                        for the first few exercises; the preview shows all of them, with the
+                        weights, rest and trainer cues, before anything starts. */}
+                    <button
+                        type="button"
+                        onClick={() => setPreviewPlan({ plan, type })}
+                        aria-label={`View all exercises in ${plan.name}`}
+                        className="w-full text-left bg-gray-50 dark:bg-slate-800/50 p-3 rounded-xl border border-gray-100 dark:border-slate-700/50 mb-6 hover:border-blue-300 dark:hover:border-blue-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors touch-manipulation"
+                    >
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Exercises ({plan.exercises.length})</p>
                         <ul className="text-sm text-gray-700 dark:text-gray-300 space-y-1.5">
-                            {plan.exercises.slice(0, 3).map((ex) => (
+                            {plan.exercises.slice(0, CARD_EXERCISE_LIMIT).map((ex) => (
                                 <li key={ex.id} className="flex justify-between gap-3">
                                     <span className="truncate">{ex.name}</span>
                                     <span className="text-gray-500 shrink-0">{ex.sets}x{ex.reps}</span>
                                 </li>
                             ))}
-                            {plan.exercises.length > 3 && (
-                                <li className="text-xs text-blue-500 font-bold pt-1">+{plan.exercises.length - 3} more...</li>
-                            )}
                         </ul>
-                    </div>
+                        <p className="text-xs text-blue-600 dark:text-blue-400 font-bold pt-2">
+                            {hiddenCount > 0 ? `+${hiddenCount} more · View all →` : "View details →"}
+                        </p>
+                    </button>
                 </div>
 
                 <div className="pl-2">
                     {type === "explore" ? (
                         <button
-                            onClick={() => followPlan.mutate(plan.id)}
-                            className="w-full bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-900 dark:text-white font-bold py-2.5 rounded-xl transition-colors"
+                            onClick={() => runCardAction(plan, type)}
+                            className={`w-full font-bold py-2.5 rounded-xl transition-colors ${cta.className}`}
                         >
-                            Save & Follow Plan
+                            {cta.label}
                         </button>
                     ) : (
                         // Only plans already in the library can be removed, so Explore keeps
                         // a single full width button.
                         <div className="flex gap-2">
                             <button
-                                onClick={() => setActiveWorkout(plan)}
-                                className={`flex-1 text-white font-bold py-2.5 rounded-xl transition-all shadow-sm active:scale-[0.99] touch-manipulation ${
-                                    type === "assigned"
-                                        ? "bg-emerald-600 hover:bg-emerald-700"
-                                        : "bg-blue-600 hover:bg-blue-700"
-                                }`}
+                                onClick={() => runCardAction(plan, type)}
+                                className={`flex-1 font-bold py-2.5 rounded-xl transition-all shadow-sm active:scale-[0.99] touch-manipulation ${cta.className}`}
                             >
-                                Start Workout 🚀
+                                {cta.label}
                             </button>
                             <button
                                 onClick={() => removePlan(plan, type)}
@@ -681,6 +712,22 @@ export default function Workouts() {
                     plan={activeWorkout}
                     onClose={() => setActiveWorkout(null)}
                     onSaved={() => void handleWorkoutSaved()}
+                />
+            )}
+
+            {/* --- PLAN PREVIEW (every exercise, before starting) --- */}
+            {/* Closes itself before running the action, so starting a workout never
+                stacks the live modal on top of the preview. */}
+            {previewPlan && (
+                <PlanPreviewModal
+                    plan={previewPlan.plan}
+                    actionLabel={CARD_CTA[previewPlan.type].label}
+                    actionClassName={CARD_CTA[previewPlan.type].className}
+                    onClose={() => setPreviewPlan(null)}
+                    onAction={() => {
+                        setPreviewPlan(null);
+                        runCardAction(previewPlan.plan, previewPlan.type);
+                    }}
                 />
             )}
 
