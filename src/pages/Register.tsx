@@ -5,6 +5,7 @@ import ReCAPTCHA from "react-google-recaptcha";
 import { api } from "../api/axios";
 import { errorDetail } from "../utils/errors";
 import PasswordStrengthMeter from "../components/PasswordStrengthMeter";
+import PasswordInput from "../components/PasswordInput";
 
 // Read environment variables
 const FEATURE_RECAPTCHA = import.meta.env.VITE_FEATURE_RECAPTCHA === "true";
@@ -294,9 +295,9 @@ export default function Register() {
                     {/* PASSWORD WITH STRENGTH METER */}
                     <div>
                         <label htmlFor="password" className="block text-sm font-bold text-gray-700 mb-1.5">Password</label>
-                        <input
+                        <PasswordInput
                             id="password"
-                            type="password"
+                            autoComplete="new-password"
                             value={password}
                             onChange={handlePasswordChange}
                             disabled={isLoading}
@@ -313,9 +314,9 @@ export default function Register() {
                     {/* CONFIRM PASSWORD */}
                     <div>
                         <label htmlFor="confirmPassword" className="block text-sm font-bold text-gray-700 mb-1.5">Confirm Password</label>
-                        <input
+                        <PasswordInput
                             id="confirmPassword"
-                            type="password"
+                            autoComplete="new-password"
                             value={confirmPassword}
                             onChange={(e) => {
                                 setConfirmPassword(e.target.value);

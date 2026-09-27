@@ -5,6 +5,7 @@ import axios from "axios";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api/axios";
 import PasswordStrengthMeter from "../components/PasswordStrengthMeter";
+import PasswordInput from "../components/PasswordInput";
 import { MIN_PASSWORD_LENGTH } from "../utils/auth";
 import { errorDetail } from "../utils/errors";
 
@@ -159,9 +160,9 @@ export default function ResetPassword() {
                     {/* NEW PASSWORD WITH STRENGTH METER */}
                     <div>
                         <label htmlFor="password" className="block text-sm font-bold text-gray-700 mb-1.5">New Password</label>
-                        <input
+                        <PasswordInput
                             id="password"
-                            type="password"
+                            autoComplete="new-password"
                             value={password}
                             onChange={handlePasswordChange}
                             disabled={resetPassword.isPending}
@@ -178,9 +179,9 @@ export default function ResetPassword() {
                     {/* CONFIRM PASSWORD */}
                     <div>
                         <label htmlFor="confirmPassword" className="block text-sm font-bold text-gray-700 mb-1.5">Confirm New Password</label>
-                        <input
+                        <PasswordInput
                             id="confirmPassword"
-                            type="password"
+                            autoComplete="new-password"
                             value={confirmPassword}
                             onChange={(e) => {
                                 setConfirmPassword(e.target.value);

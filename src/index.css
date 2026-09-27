@@ -40,3 +40,11 @@
         }
     }
 }
+
+/* Edge on Windows draws its own eye inside every password field. PasswordInput
+   already has one, and two eyes side by side is confusing. Kept outside @layer
+   so Tailwind never drops it for not seeing the selector in a class name. */
+input::-ms-reveal,
+input::-ms-clear {
+    display: none;
+}

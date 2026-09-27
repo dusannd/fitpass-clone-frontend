@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
 import { api } from "../api/axios";
+import PasswordInput from "../components/PasswordInput";
 import { errorDetail } from "../utils/errors";
 
 // Read environment variables
@@ -242,9 +243,9 @@ export default function Login() {
                                 Forgot your password?
                             </Link>
                         </div>
-                        <input
+                        <PasswordInput
                             id="password"
-                            type="password"
+                            autoComplete="current-password"
                             value={password}
                             onChange={(e) => {
                                 setPassword(e.target.value);
