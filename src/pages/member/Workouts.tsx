@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/axios";
 import { errorDetail } from "../../utils/errors";
 import { ProgressCard } from "../../components/ProgressCard";
@@ -11,7 +11,14 @@ import MyTrainerChip from "../../components/MyTrainerChip";
 import { parseGoals } from "../../utils/profile";
 import type { CoachingLink } from "../../utils/coaching";
 import type { UserProfile } from "../../components/Layout";
-import { groupLogsByExercise, type WorkoutPlan, type WorkoutSession } from "../../utils/workout";
+import {
+    groupLogsByExercise,
+    HISTORY_PAGE_SIZE,
+    type ProgressPoint,
+    type WorkoutHistoryPage,
+    type WorkoutPlan,
+    type WorkoutSession,
+} from "../../utils/workout";
 
 // --- INTERFACES ---
 // Same shape as the trainer cards on the Find a Trainer page.
@@ -112,9 +119,25 @@ export default function Workouts() {
       refresh after following or removing a plan - hit the API once per trainer in the
       gym. Those still load one at a time, only when a member opens that trainer's card.
     */
-    const historyQuery = useQuery({
+    // History comes a page at a time. It used to be one request for "everything",
+    // which the API quietly capped at the last 10 sessions. `total` says whether
+    // "Load more" has anything left.
+    const historyQuery = useInfiniteQuery({
         queryKey: ["workouts", "history"],
-        queryFn: async () => (await api.get<WorkoutSession[]>("/workouts/history")).data,
+        queryFn: async ({ pageParam }) =>
+            (await api.get<WorkoutHistoryPage>(`/workouts/history?skip=${pageParam}&limit=${HISTORY_PAGE_SIZE}`)).data,
+        initialPageParam: 0,
+        getNextPageParam: (lastPage, pages) => {
+            const loaded = pages.reduce((count, page) => count + page.items.length, 0);
+            return loaded < lastPage.total ? loaded : undefined;
+        },
+    });
+
+    // The strength chart's own data: the top set of every session, all time. It is
+    // no longer built from the history list, so it does not stop where paging does.
+    const progressQuery = useQuery({
+        queryKey: ["workouts", "progress"],
+        queryFn: async () => (await api.get<ProgressPoint[]>("/workouts/progress")).data,
     });
 
     const savedPlansQuery = useQuery({
@@ -139,7 +162,8 @@ export default function Workouts() {
         queryFn: async () => (await api.get<CoachingLink[]>("/coaching/my-trainers")).data,
     });
 
-    const history = historyQuery.data ?? [];
+    const history = useMemo(() => historyQuery.data?.pages.flatMap((page) => page.items) ?? [], [historyQuery.data]);
+    const historyTotal = historyQuery.data?.pages[0]?.total ?? 0;
     const trainers = trainersQuery.data ?? [];
     const coachingLinks = coachingQuery.data ?? [];
 
@@ -612,7 +636,7 @@ export default function Workouts() {
                     {/* Hidden rather than fed an empty array: a strength chart drawn
                         from a failed fetch is a flat line, which reads as "you made no
                         progress" instead of "we could not load this". */}
-                    {!historyFailed && <ProgressCard sessions={history} />}
+                    {progressQuery.data && <ProgressCard points={progressQuery.data} />}
 
                     <div>
                         <h2 className="text-xl font-bold text-gray-800 dark:text-white mb-4">Past Sessions</h2>
@@ -698,6 +722,21 @@ export default function Workouts() {
                                         </div>
                                     );
                                 })}
+
+                                {/* The next page on demand. The list used to end silently
+                                    at 10, with nothing saying there was more. */}
+                                {historyQuery.hasNextPage && (
+                                    <button
+                                        type="button"
+                                        onClick={() => void historyQuery.fetchNextPage()}
+                                        disabled={historyQuery.isFetchingNextPage}
+                                        className="self-center mt-2 px-6 py-2.5 rounded-xl text-sm font-bold border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-300 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-60 transition-colors"
+                                    >
+                                        {historyQuery.isFetchingNextPage
+                                            ? "Loading…"
+                                            : `Load more (${history.length} of ${historyTotal})`}
+                                    </button>
+                                )}
                             </div>
                         )}
                     </div>

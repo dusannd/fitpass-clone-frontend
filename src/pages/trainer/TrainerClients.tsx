@@ -7,7 +7,7 @@ import Avatar from "../../components/Avatar";
 import { ProgressCard } from "../../components/ProgressCard";
 import { parseGoals } from "../../utils/profile";
 import type { UserProfile } from "../../components/Layout";
-import type { WorkoutSession } from "../../utils/workout";
+import { sessionsToProgressPoints, type WorkoutSession } from "../../utils/workout";
 
 interface ClientInfo {
     id: number;
@@ -78,6 +78,9 @@ export default function TrainerClients() {
     });
 
     const progressSessions = progressQuery.data ?? [];
+    // The chart takes points, not sessions; the member's own chart gets these from
+    // /workouts/progress, here they are built from the client's sessions.
+    const progressPoints = sessionsToProgressPoints(progressSessions);
     const progressLoading = !!progressClient && progressQuery.isPending;
     const progressError = progressQuery.error
         ? errorDetail(progressQuery.error, "Failed to load this client's progress.")
@@ -356,7 +359,7 @@ export default function TrainerClients() {
                                     <p className="font-bold">This client hasn't logged any workouts yet.</p>
                                 </div>
                             ) : (
-                                <ProgressCard sessions={progressSessions} />
+                                <ProgressCard points={progressPoints} />
                             )}
                         </div>
                     </div>

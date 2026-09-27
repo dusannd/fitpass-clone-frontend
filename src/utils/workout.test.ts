@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { Exercise, ExerciseLog } from "./workout";
 import {
     groupLogsByExercise,
+    sessionsToProgressPoints,
     roundToStep,
     parseTargetReps,
     DEFAULT_WEIGHT_STEP,
@@ -156,5 +157,34 @@ describe("parseTargetReps", () => {
 
     it("never returns less than one rep", () => {
         expect(parseTargetReps("0")).toBe(1);
+    });
+});
+
+describe("sessionsToProgressPoints", () => {
+    it("gives one point per session and exercise, at the heaviest set", () => {
+        const squat = makeExercise({ id: 2, name: "Squat" });
+        const pullUp = makeExercise({ id: 3, name: "Pull-up", requires_weight: false });
+
+        const points = sessionsToProgressPoints([
+            {
+                id: 10,
+                user_id: 1,
+                plan_id: 1,
+                date: "2026-09-01T10:00:00Z",
+                notes: null,
+                exercise_logs: [
+                    makeLog({ id: 1, exercise_id: 2, exercise: squat, weight_kg: 100 }),
+                    makeLog({ id: 2, exercise_id: 2, exercise: squat, weight_kg: 110 }),
+                    // Bodyweight: nothing to chart.
+                    makeLog({ id: 3, exercise_id: 3, exercise: pullUp, weight_kg: null }),
+                    // The exercise was deleted: no id to chart it under.
+                    makeLog({ id: 4, exercise_id: null, exercise: null, weight_kg: 80 }),
+                ],
+            },
+        ]);
+
+        expect(points).toEqual([
+            { session_id: 10, date: "2026-09-01T10:00:00Z", exercise_id: 2, exercise_name: "Squat", top_weight_kg: 110 },
+        ]);
     });
 });

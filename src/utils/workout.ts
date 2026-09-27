@@ -85,6 +85,46 @@ export const groupLogsByExercise = (logs: ExerciseLog[]): GroupedExercise[] => {
     return Array.from(groups.values());
 };
 
+// --- 1b. HISTORY PAGES + CHART POINTS (mirror app/schemas/workout.py) ---
+
+/** One page of /workouts/history. `total` is the whole history, not the page. */
+export interface WorkoutHistoryPage {
+    total: number;
+    items: WorkoutSession[];
+}
+
+export const HISTORY_PAGE_SIZE = 10;
+
+/** One point on the strength chart: the heaviest set of one exercise in one session. */
+export interface ProgressPoint {
+    session_id: number;
+    date: string;
+    exercise_id: number;
+    exercise_name: string;
+    top_weight_kg: number;
+}
+
+/**
+ * Builds chart points out of whole sessions, the same way /workouts/progress does
+ * in SQL. The member's own chart gets them straight from that endpoint; this is for
+ * the trainer's view of a client, which already holds that client's sessions.
+ */
+export const sessionsToProgressPoints = (sessions: WorkoutSession[]): ProgressPoint[] =>
+    sessions.flatMap((session) =>
+        groupLogsByExercise(session.exercise_logs).flatMap((group) => {
+            const exerciseId = group.sets[0]?.exercise_id ?? null;
+            // Bodyweight-only groups and sets whose exercise is gone have nothing to chart.
+            if (exerciseId === null || group.topWeight === null || group.topWeight <= 0) return [];
+            return [{
+                session_id: session.id,
+                date: session.date,
+                exercise_id: exerciseId,
+                exercise_name: group.name,
+                top_weight_kg: group.topWeight,
+            }];
+        }),
+    );
+
 // --- 2. WEIGHT STEPS ---
 // Every machine moves in its own increment, and the client should never have to work
 // that out mid set. The trainer picks one of these and the "+" button obeys it.
