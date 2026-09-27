@@ -82,7 +82,14 @@ export default function MemberCoaching() {
      */
     const addPendingLink = (trainerId: number) => {
         setLinks((prev) => {
-            if (prev.some((l) => l.trainer_id === trainerId)) return prev;
+            // Asking again after a rejection reopens the SAME link on the server, so the
+            // existing one is flipped to pending here too. Returning early instead left a
+            // re-request looking as if nothing had happened.
+            if (prev.some((l) => l.trainer_id === trainerId)) {
+                return prev.map((l) =>
+                    l.trainer_id === trainerId ? { ...l, status: "PENDING", retry_after: null } : l
+                );
+            }
 
             const trainer = trainers.find((t) => t.id === trainerId);
 
@@ -94,6 +101,8 @@ export default function MemberCoaching() {
                 client_id: 0,
                 status: "PENDING",
                 created_at: new Date().toISOString(),
+                rejection_count: 0,
+                retry_after: null,
                 trainer: trainer
                     ? {
                         id: trainer.id,
@@ -121,13 +130,10 @@ export default function MemberCoaching() {
             addPendingLink(trainerId);
 
         } catch (err: unknown) {
-            const errorMsg = errorDetail(err, "Failed to send request.");
-            if (errorMsg.includes("already exists")) {
-                addPendingLink(trainerId);
-                setError(`You already have a pending or active request with ${trainerName}.`);
-            } else {
-                setError(errorMsg);
-            }
+            // Shown as the server said it. This used to treat any "already exists"
+            // answer as pending - including REJECTED, so a declined member was shown a
+            // request that did not exist.
+            setError(errorDetail(err, "Failed to send request."));
         } finally {
             setLoadingId(null);
         }
@@ -205,6 +211,12 @@ export default function MemberCoaching() {
                         const isAccepted = acceptedIds.includes(trainer.id);
                         const isCurrentlyLoading = loadingId === trainer.id;
 
+                        // A trainer who said no can be asked again - unless it was the
+                        // third "no" in a row, then retry_after holds the date.
+                        const rejectedLink = links.find(l => l.trainer_id === trainer.id && l.status === "REJECTED");
+                        const retryAfter = rejectedLink?.retry_after ? new Date(rejectedLink.retry_after) : null;
+                        const retryDate = retryAfter?.toLocaleDateString([], { day: "numeric", month: "short" });
+
                         // For trainers we show the same fitness_goals field as "Specialties"
                         const specialties = parseGoals(trainer.profile?.fitness_goals);
 
@@ -264,16 +276,25 @@ export default function MemberCoaching() {
                                 {/* mt-auto pushes the line and the button to the bottom, so all cards are the same height */}
                                 <div className="w-full h-px bg-gray-200 dark:bg-slate-800 mt-auto mb-5"></div>
 
+                                {rejectedLink && (
+                                    <p className="w-full -mt-2 mb-3 text-xs font-bold text-rose-600 dark:text-rose-400">
+                                        {retryAfter
+                                            ? `Declined ${rejectedLink.rejection_count} times in a row - you can ask again on ${retryDate}.`
+                                            : "Declined your last request - you can ask again."}
+                                    </p>
+                                )}
+
                                 {/* The button only avoids showing a request that is certain
                                     to come back 403 - the real gate is the backend's. An
                                     accepted trainer keeps their green card either way. */}
                                 <button
-                                    disabled={isPending || isAccepted || isCurrentlyLoading || !canCoach}
+                                    disabled={isPending || isAccepted || isCurrentlyLoading || !canCoach || retryAfter !== null}
                                     onClick={() => void handleSendRequest(trainer.id, `${trainer.first_name}`)}
                                     className={`w-full font-black py-3 px-4 rounded-xl transition-all shadow-sm ${
                                         isAccepted
                                             ? "bg-emerald-500 text-white cursor-default" // Zeleno jer je tvoj aktuelni trener
-                                            : isPending || !canCoach
+                                            : isPending || !canCoach || retryAfter
+
                                                 ? "bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-gray-500 cursor-not-allowed" // Sivo jer se čeka
                                                 : "bg-blue-600 hover:bg-blue-700 text-white hover:shadow-md" // Plavo za slanje
                                     }`}
@@ -284,9 +305,13 @@ export default function MemberCoaching() {
                                             ? "Your Trainer 🟢"
                                             : isPending
                                                 ? "Request Pending ⏳"
-                                                : canCoach
-                                                    ? "Request Coaching"
-                                                    : "Requires an upgrade 🔒"}
+                                                : !canCoach
+                                                    ? "Requires an upgrade 🔒"
+                                                    : retryAfter
+                                                        ? `Ask again on ${retryDate}`
+                                                        : rejectedLink
+                                                            ? "Ask again"
+                                                            : "Request Coaching"}
                                 </button>
                             </div>
                         );

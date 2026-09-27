@@ -25,6 +25,10 @@ export interface CoachingLink {
     // "PENDING" | "ACCEPTED" | "REJECTED" - kept as a string because the backend column is one.
     status: string;
     created_at: string;
+    // Rejections in a row. After three the member has to wait, and retry_after says
+    // until when (null when nothing stops them asking again).
+    rejection_count: number;
+    retry_after: string | null;
     trainer: CoachingUser | null;
     client: CoachingUser | null;
 }
