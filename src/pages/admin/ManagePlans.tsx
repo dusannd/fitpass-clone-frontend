@@ -701,6 +701,15 @@ export default function ManagePlans() {
                                                 </div>
                                             </div>
 
+                                            {/* "HH:MM" strings compare correctly as text. A start after the
+                                                end is a valid night plan, so this informs rather than blocks -
+                                                it is there so a swapped pair does not go unnoticed. */}
+                                            {allowedTimeStart && allowedTimeEnd && allowedTimeStart > allowedTimeEnd && (
+                                                <p className="text-xs font-semibold text-purple-700 dark:text-purple-300">
+                                                    Overnight window: open from {allowedTimeStart} until {allowedTimeEnd} the next morning.
+                                                </p>
+                                            )}
+
                                             {/* The days are toggle buttons, not a form control, so this is
                                                 a group heading like the two above. */}
                                             <div role="group" aria-labelledby="rule-days-heading">

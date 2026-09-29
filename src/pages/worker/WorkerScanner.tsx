@@ -88,6 +88,17 @@ export default function WorkerScanner() {
             // 1. Instantly pause scanning to prevent rapid-fire API calls
             setIsScanning(false);
 
+            // The camera starts on mount, before the gym list has arrived, and until
+            // then locationId falls back to 0. Posting that got a valid member refused
+            // with "your plan does not include this location" - and logged as a real
+            // refusal. Nothing is sent, so the member's code stays good to scan again.
+            if (locationIdRef.current === 0) {
+                setScanResult({ status: "ERROR", message: "Gyms are still loading. Scan again." });
+                vibrate([80, 60, 80]);
+                scheduleResume();
+                return;
+            }
+
             // 2. Send API Request to backend using the LATEST values from refs
             try {
                 const response = await api.post<ScanResponse>("/access/scan", {
@@ -121,14 +132,19 @@ export default function WorkerScanner() {
                 vibrate([80, 60, 80]);
             }
 
-            // The post above is awaited, so the page may be gone by now. The effect
-            // cleanup nulls scannerRef synchronously, and a StrictMode remount points it
-            // at a different scanner - either way this handler no longer owns the camera.
-            // Without this the timer below would be armed AFTER the cleanup already ran
-            // clearTimeout on it, and fire three seconds later on a dead component.
+            // 5. Automatically resume scanning after 3 seconds
+            scheduleResume();
+        };
+
+        const scheduleResume = () => {
+            // The post in the handler is awaited, so the page may be gone by now. The
+            // effect cleanup nulls scannerRef synchronously, and a StrictMode remount
+            // points it at a different scanner - either way this handler no longer owns
+            // the camera. Without this the timer below would be armed AFTER the cleanup
+            // already ran clearTimeout on it, and fire three seconds later on a dead
+            // component.
             if (scannerRef.current !== scanner) return;
 
-            // 5. Automatically resume scanning after 3 seconds
             clearTimeout(resumeTimer);
             resumeTimer = window.setTimeout(() => {
                 setScanResult({ status: "IDLE", message: "" });
