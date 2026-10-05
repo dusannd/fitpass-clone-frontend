@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/axios.ts";
 import { errorDetail } from "../../utils/errors";
 import Avatar from "../../components/Avatar";
@@ -19,27 +19,29 @@ interface Trainer {
 }
 
 export default function MemberCoaching() {
-    const [trainers, setTrainers] = useState<Trainer[]>([]);
+    const queryClient = useQueryClient();
+
+    const [successMsg, setSuccessMsg] = useState("");
+
+    // --- 1. SERVER STATE ---
+    // Same keys Workouts and MemberAppointments read, so the three pages share one
+    // cache entry instead of each holding its own copy of who your trainer is. This
+    // page used to fetch both in a useEffect, so a request sent here left the other
+    // two showing the old list for the rest of the 30s staleTime.
+    const trainersQuery = useQuery({
+        queryKey: ["workouts", "trainers"],
+        queryFn: async () => (await api.get<Trainer[]>("/workouts/trainers")).data,
+    });
 
     // The coaching links themselves, so the header chip can name the trainer instead of
     // us keeping only their ids and asking the API for the same thing twice.
-    const [links, setLinks] = useState<CoachingLink[]>([]);
-
-    const [loading, setLoading] = useState(true);
-
-    // Separate from `error`, which this page also uses for a failed coaching request.
-    // Gating the trainer list on `error` would blank it whenever a request failed to
-    // send, and gating nothing on it left an amber "no trainers at this gym" panel
-    // sitting directly under a red "failed to load trainers" banner.
-    const [loadFailed, setLoadFailed] = useState(false);
-    const [error, setError] = useState("");
-    const [successMsg, setSuccessMsg] = useState("");
-    const [loadingId, setLoadingId] = useState<number | null>(null);
+    const linksQuery = useQuery({
+        queryKey: ["coaching", "my-trainers"],
+        queryFn: async () => (await api.get<CoachingLink[]>("/coaching/my-trainers")).data,
+    });
 
     // Personal training is a plan perk, so the page needs to know which plan the
-    // member holds. useQuery rather than the useEffect below because that pattern is
-    // only still here in the pages that haven't been migrated yet - new fetches use
-    // the query cache, which is also how this shares one request with the pricing page.
+    // member holds. Shares one request with the pricing page through the cache.
     const subQuery = useQuery({
         queryKey: MY_SUBSCRIPTION_KEY,
         queryFn: fetchMySubscription,
@@ -52,94 +54,41 @@ export default function MemberCoaching() {
     const entitlementKnown = !subQuery.isPending;
     const canCoach = planIncludesTrainer(subQuery.data);
 
-    useEffect(() => {
-        const fetchInitialData = async () => {
-            try {
-                // Odjednom vučemo sve trenere i status naših zahteva
-                const [trainersRes, myLinksRes] = await Promise.all([
-                    api.get<Trainer[]>("/workouts/trainers"),
-                    api.get<CoachingLink[]>("/coaching/my-trainers") // <-- ONA NOVA BACKEND RUTA!
-                ]);
-
-                setTrainers(trainersRes.data);
-                setLinks(myLinksRes.data);
-
-            } catch (err: unknown) {
-                setLoadFailed(true);
-                setError(errorDetail(err, "Failed to load trainers."));
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        void fetchInitialData();
-    }, []);
-
-    /**
-     * Marks a trainer as pending locally, so the card and the header chip both update the
-     * moment the request goes through instead of after a refetch. The link gets a negative
-     * id because it is a placeholder: the real row arrives on the next page load.
-     */
-    const addPendingLink = (trainerId: number) => {
-        setLinks((prev) => {
-            // Asking again after a rejection reopens the SAME link on the server, so the
-            // existing one is flipped to pending here too. Returning early instead left a
-            // re-request looking as if nothing had happened.
-            if (prev.some((l) => l.trainer_id === trainerId)) {
-                return prev.map((l) =>
-                    l.trainer_id === trainerId ? { ...l, status: "PENDING", retry_after: null } : l
-                );
-            }
-
-            const trainer = trainers.find((t) => t.id === trainerId);
-
-            return [...prev, {
-                id: -trainerId,
-                trainer_id: trainerId,
-                // Not known on this page and nothing reads it, so it stays at 0 until the
-                // server's own copy of this link replaces the placeholder.
-                client_id: 0,
-                status: "PENDING",
-                created_at: new Date().toISOString(),
-                rejection_count: 0,
-                retry_after: null,
-                trainer: trainer
-                    ? {
-                        id: trainer.id,
-                        first_name: trainer.first_name,
-                        last_name: trainer.last_name,
-                        email: trainer.email,
-                        profile: trainer.profile,
-                    }
-                    : null,
-                client: null,
-            }];
-        });
-    };
-
-    const handleSendRequest = async (trainerId: number, trainerName: string) => {
-        setError("");
-        setSuccessMsg("");
-        setLoadingId(trainerId);
-
-        try {
+    // --- 2. SENDING A REQUEST ---
+    const requestMutation = useMutation({
+        mutationFn: async ({ trainerId }: { trainerId: number; trainerName: string }) => {
             await api.post(`/coaching/request/${trainerId}`);
+        },
+        onMutate: () => setSuccessMsg(""),
+        onSuccess: async (_data, { trainerName }) => {
             setSuccessMsg(`Coaching request sent successfully to ${trainerName}!`);
 
-            // Ubaci ID u PENDING niz čim prođe
-            addPendingLink(trainerId);
+            // Returned, so the mutation stays pending until the fresh links are in.
+            // Otherwise the button would flash back to "Request Coaching" for the
+            // length of one refetch and invite a second click. ["coaching"] also
+            // refreshes the header chip on Workouts and MemberAppointments.
+            await queryClient.invalidateQueries({ queryKey: ["coaching"] });
+        },
+    });
 
-        } catch (err: unknown) {
-            // Shown as the server said it. This used to treat any "already exists"
-            // answer as pending - including REJECTED, so a declined member was shown a
-            // request that did not exist.
-            setError(errorDetail(err, "Failed to send request."));
-        } finally {
-            setLoadingId(null);
-        }
-    };
+    // Shown as the server said it. This used to treat any "already exists" answer as
+    // pending - including REJECTED, so a declined member was shown a request that did
+    // not exist.
+    const error = requestMutation.isError
+        ? errorDetail(requestMutation.error, "Failed to send request.")
+        : "";
+    const loadingId = requestMutation.isPending ? requestMutation.variables.trainerId : null;
 
-    if (loading) return <div className="p-6 text-gray-500 dark:text-gray-400 font-bold">Loading trainers...</div>;
+    // Separate from `error`, which is a failed coaching request. Gating the trainer
+    // list on that would blank it whenever a request failed to send.
+    const loadFailed = trainersQuery.isError || linksQuery.isError;
+
+    if (trainersQuery.isPending || linksQuery.isPending) {
+        return <div className="p-6 text-gray-500 dark:text-gray-400 font-bold">Loading trainers...</div>;
+    }
+
+    const trainers = trainersQuery.data ?? [];
+    const links = linksQuery.data ?? [];
 
     // Derived from the links themselves, so there is a single source of truth for who is
     // pending and who accepted.
@@ -289,7 +238,7 @@ export default function MemberCoaching() {
                                     accepted trainer keeps their green card either way. */}
                                 <button
                                     disabled={isPending || isAccepted || isCurrentlyLoading || !canCoach || retryAfter !== null}
-                                    onClick={() => void handleSendRequest(trainer.id, `${trainer.first_name}`)}
+                                    onClick={() => requestMutation.mutate({ trainerId: trainer.id, trainerName: trainer.first_name })}
                                     className={`w-full font-black py-3 px-4 rounded-xl transition-all shadow-sm ${
                                         isAccepted
                                             ? "bg-emerald-500 text-white cursor-default" // Zeleno jer je tvoj aktuelni trener

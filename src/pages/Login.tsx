@@ -3,9 +3,11 @@ import type { FormEvent } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import ReCAPTCHA from "react-google-recaptcha";
+import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/axios";
 import PasswordInput from "../components/PasswordInput";
 import { errorDetail } from "../utils/errors";
+import { clearUserScopedStorage } from "../utils/storage";
 
 // Read environment variables
 const FEATURE_RECAPTCHA = import.meta.env.VITE_FEATURE_RECAPTCHA === "true";
@@ -13,6 +15,7 @@ const SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY || "";
 
 export default function Login() {
     const navigate = useNavigate();
+    const queryClient = useQueryClient();
 
     // Set by the axios 401 interceptor when it kicks a user out mid-session
     const [searchParams] = useSearchParams();
@@ -102,7 +105,14 @@ export default function Login() {
                 recaptcha_token: recaptchaToken
             });
 
-            // 6. Success! Redirect (browser već ima cookie)
+            // 6. Success! The browser already holds the new cookie.
+            // Throw away whatever the previous account left behind before the
+            // dashboard renders. Nothing forces a Log Out before somebody else signs
+            // in on a shared desk, and with staleTime 30s (main.tsx) the new user
+            // would otherwise see the old one's cached profile, plan and trainers
+            // until the first refetch. Same cleanup as Layout's handleLogout.
+            queryClient.clear();
+            clearUserScopedStorage();
             navigate("/dashboard");
 
         } catch (err: unknown) {

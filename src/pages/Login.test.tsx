@@ -2,28 +2,33 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import type { AxiosResponse } from "axios";
 import Login from "./Login";
 import { api } from "../api/axios";
+import { QR_STATE_KEY } from "../utils/storage";
 
 // --- HELPERS ---
 
 /**
  * Renders the login screen inside a real router, with a marker page at /dashboard.
  * A successful login navigates there, so finding the marker is how we prove the
- * redirect happened - no need to mock useNavigate.
+ * redirect happened - no need to mock useNavigate. A real QueryClient goes in too,
+ * so a test can seed it with the previous user's data and look at it afterwards.
  */
-const renderLogin = (initialEntry = "/login") =>
+const renderLogin = (initialEntry = "/login", queryClient = new QueryClient()) =>
     render(
-        <MemoryRouter initialEntries={[initialEntry]}>
-            <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route path="/dashboard" element={<h1>Dashboard</h1>} />
-                <Route path="/forgot-password" element={<h1>Forgot</h1>} />
-                <Route path="/register" element={<h1>Register</h1>} />
-            </Routes>
-        </MemoryRouter>,
+        <QueryClientProvider client={queryClient}>
+            <MemoryRouter initialEntries={[initialEntry]}>
+                <Routes>
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/dashboard" element={<h1>Dashboard</h1>} />
+                    <Route path="/forgot-password" element={<h1>Forgot</h1>} />
+                    <Route path="/register" element={<h1>Register</h1>} />
+                </Routes>
+            </MemoryRouter>
+        </QueryClientProvider>,
     );
 
 /** A rejection shaped the way axios shapes one, so axios.isAxiosError() accepts it. */
@@ -112,6 +117,33 @@ describe("Login", () => {
             extra_info: "",
             recaptcha_token: null,
         });
+    });
+
+    // A shared desk computer: somebody navigated back to /login without logging out,
+    // and the next person signs in. Their dashboard must not render from the old
+    // account's cache, and the old account's QR code must not survive either.
+    it("drops the previous user's cache and stored QR code on a successful login", async () => {
+        const user = userEvent.setup();
+        postSpy.mockResolvedValue({ data: {} } as AxiosResponse);
+
+        const queryClient = new QueryClient();
+        queryClient.setQueryData(["userProfile"], { email: "previous@example.com" });
+        localStorage.setItem(QR_STATE_KEY, "previous-user-qr");
+        localStorage.setItem("theme", "dark");
+
+        renderLogin("/login", queryClient);
+
+        await user.type(fields().email, "member@example.com");
+        await user.type(fields().password, "correct-horse");
+        await user.click(fields().submit);
+
+        expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
+        expect(queryClient.getQueryData(["userProfile"])).toBeUndefined();
+        expect(localStorage.getItem(QR_STATE_KEY)).toBeNull();
+        // A preference of the machine, not of the account
+        expect(localStorage.getItem("theme")).toBe("dark");
+
+        localStorage.clear();
     });
 
     // --- 3. SERVER ERRORS ---

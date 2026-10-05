@@ -10,6 +10,7 @@ import { errorDetail } from "../utils/errors";
 import { QR_STATE_KEY as STORAGE_KEY } from "../utils/storage";
 import { parseGoals, getPrimaryAccent } from "../utils/profile";
 import { isQrSpent } from "../utils/access";
+import { MY_SUBSCRIPTION_KEY } from "../utils/subscription";
 import type { User } from "../components/Layout";
 
 const WS_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api').replace(/^http/, 'ws');
@@ -81,7 +82,11 @@ export default function Dashboard() {
         // slightly after the browser redirect back here. Invalidate the cached
         // user profile so Layout/Dashboard refetch and pick up the new
         // subscription instead of showing stale "no active plan" state.
+        // MY_SUBSCRIPTION_KEY is a separate cache entry (Subscriptions, coaching and
+        // appointments read the plan from it), so it has to go too, or those pages
+        // keep saying "no active plan" for the rest of the 30s staleTime.
         void queryClient.invalidateQueries({ queryKey: ["userProfile"] });
+        void queryClient.invalidateQueries({ queryKey: MY_SUBSCRIPTION_KEY });
 
         navigate("/dashboard", { replace: true });
 
